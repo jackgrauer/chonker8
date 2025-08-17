@@ -1,0 +1,30 @@
+[package]
+name = "chonker8"
+version = "8.0.0"
+edition = "2021"
+
+[dependencies]
+# Core
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "fs"] }
+
+# Terminal UI
+crossterm = "0.28"
+
+# PDF
+pdfium-render = { version = "0.8", features = ["thread_safe"] }
+image = "0.25"
+
+# Image display in terminal
+viuer = { version = "0.7.1", default-features = false }
+image_0_24 = { package = "image", version = "0.24" }
+
+# File picker
+nucleo = "0.5"
+
+# FAST clipboard
+copypasta = "0.10"
+
+# Basic utilities
+lazy_static = "1.4"
