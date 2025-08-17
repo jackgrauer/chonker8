@@ -13,7 +13,6 @@ use std::process::Command;
 use std::sync::Arc;
 
 use crate::theme::ChonkerTheme;
-use crate::{pdf_renderer, viuer_display};
 
 /// Use nucleo to pick a PDF file with interactive fuzzy finding
 pub fn pick_pdf_file() -> Result<Option<PathBuf>> {
@@ -68,41 +67,36 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
     let mut query = String::new();
     let mut selected_index = 0usize;
     let mut scroll_offset = 0usize;
-    let mut last_preview_path: Option<String> = None;
-    let mut needs_full_redraw = true;
     
     loop {
-        // Only clear screen on first render or when query changes
+        // Clear screen
+        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+        
+        // Draw uniform header matching other tabs
         let (term_width, _) = terminal::size().unwrap_or((80, 24));
         
-        if needs_full_redraw {
-            execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
-            
-            // Draw header on full redraw
-            // First header line with tab styling and version
-            let header_text = format!("🐹 Chonker {}", env!("CARGO_PKG_VERSION"));
-            execute!(
-                stdout,
-                MoveTo(0, 0),
-                SetBackgroundColor(ChonkerTheme::accent_load_file()),
-                SetForegroundColor(ChonkerTheme::text_header()),
-                SetAttribute(Attribute::Bold),
-                Print(format!("  {:<width$}", header_text, width = (term_width - 2) as usize)),
-                ResetColor,
-                SetAttribute(Attribute::Reset)
-            )?;
-            
-            // Second header line to match other tabs
-            execute!(
-                stdout,
-                MoveTo(0, 1),
-                SetBackgroundColor(ChonkerTheme::accent_load_file()),
-                Print(" ".repeat(term_width as usize)),
-                ResetColor
-            )?;
-            
-            needs_full_redraw = false;
-        }
+        // First header line with tab styling and version
+        let header_text = format!("🐹 Chonker {}", env!("CARGO_PKG_VERSION"));
+        execute!(
+            stdout,
+            MoveTo(0, 0),
+            SetBackgroundColor(ChonkerTheme::accent_load_file()),
+            SetForegroundColor(ChonkerTheme::text_header()),
+            SetAttribute(Attribute::Bold),
+            Print(format!("  {:<width$}", header_text, width = (term_width - 2) as usize)),
+            ResetColor,
+            SetAttribute(Attribute::Reset)
+        )?;
+        
+        // Second header line to match other tabs
+        execute!(
+            stdout,
+            MoveTo(0, 1),
+            SetBackgroundColor(ChonkerTheme::accent_load_file()),
+            Print(" ".repeat(term_width as usize)),
+            ResetColor,
+            Print("\n")
+        )?;
         
         // Draw search box with themed colors
         execute!(
@@ -122,11 +116,10 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
         let snapshot = nucleo.snapshot();
         let all_matches = snapshot.matched_items(..).collect::<Vec<_>>();
         
-        // Calculate display parameters - more space for file list
+        // Calculate display parameters
         let (term_width, term_height) = terminal::size().unwrap_or((80, 24));
-        let split_x = (term_width * 3) / 5; // 60% for file list, 40% for preview
-        let max_path_width = (split_x as usize).saturating_sub(5); // More space for file names
-        let max_display_items = (term_height as usize).saturating_sub(8); // Leave more space for terminal readout
+        let max_path_width = (term_width as usize).saturating_sub(5);
+        let max_display_items = (term_height as usize).saturating_sub(9).min(15); // Reserve space for header/footer (now 9 lines)
         
         // Update scroll offset to keep selected item visible
         if selected_index >= scroll_offset + max_display_items {
@@ -135,8 +128,6 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
             scroll_offset = selected_index;
         }
         
-        // Remove the ugly divider - clean look
-        
         // Get visible matches with scrolling
         let visible_matches = all_matches
             .iter()
@@ -144,7 +135,7 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
             .take(max_display_items)
             .collect::<Vec<_>>();
         
-        // Draw matches (constrained to left side)
+        // Draw matches
         for (display_i, item) in visible_matches.iter().enumerate() {
             let actual_index = scroll_offset + display_i;
             let path = item.data.as_ref();
@@ -159,11 +150,11 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
             // Calculate current line position (header: 2 lines, spacing: 1 line, search: 2 lines, then matches)
             let line_pos = 6 + display_i as u16;
             
-            // Move to the correct line and clear only the left part
+            // Move to the correct line and clear it
             execute!(
                 stdout,
                 MoveTo(0, line_pos),
-                Clear(ClearType::UntilNewLine)
+                Clear(ClearType::CurrentLine)
             )?;
             
             // Force truncate to terminal width - be very strict
@@ -218,52 +209,8 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
             )?;
         }
         
-        // Show preview of selected PDF on the right side
-        if !all_matches.is_empty() && selected_index < all_matches.len() {
-            let selected_path = all_matches[selected_index].data.as_ref();
-            let preview_x = split_x + 2;
-            let preview_width = term_width - split_x - 3;
-            let preview_height = term_height - 8; // Leave space for header and footer
-            
-            // Render image only if selection changed (reduce flickering)
-            if last_preview_path.as_deref() != Some(selected_path) {
-                if let Ok(image) = pdf_renderer::render_pdf_page(
-                    &std::path::PathBuf::from(selected_path), 
-                    0, // First page
-                    30, // 40% of 75 = 30 pixels width 
-                    45  // 40% of 112 = 45 pixels height
-                ) {
-                    // Display the tiny preview image on the right side
-                    let _ = viuer_display::display_pdf_image(
-                        &image,
-                        preview_x, // Right side
-                        4, // Below header
-                        30,  // Match the render width
-                        45, // Match the render height
-                        true // dark mode
-                    );
-                }
-                last_preview_path = Some(selected_path.to_string());
-            }
-            
-            // Show filename below the preview
-            let path_buf = std::path::PathBuf::from(selected_path);
-            let filename = path_buf
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown.pdf");
-            
-            execute!(
-                stdout,
-                MoveTo(preview_x, term_height - 6),
-                SetForegroundColor(ChonkerTheme::text_dim()),
-                Print(format!("{:^width$}", filename, width = preview_width as usize)),
-                ResetColor
-            )?;
-        }
-        
-        // Draw scroll indicator and help with more space for terminal readout
-        let help_line = term_height - 2;
+        // Draw scroll indicator and help
+        let help_line = (6 + max_display_items + 2) as u16;
         let scroll_indicator = if all_matches.len() > max_display_items {
             format!("  Showing {}-{} of {} files", 
                 scroll_offset + 1, 
@@ -284,10 +231,10 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
         
         execute!(
             stdout,
-            MoveTo(0, term_height - 1),
+            MoveTo(0, help_line + 1),
             Clear(ClearType::CurrentLine),
             SetForegroundColor(ChonkerTheme::text_dim()),
-            Print("  ↑/↓ Navigate  •  Enter Select  •  Ctrl+C Quit  •  Type to search"),
+            Print("  ↑/↓ Navigate  •  Scroll/Trackpad  •  Enter Select  •  Esc Cancel  •  Type to search"),
             ResetColor
         )?;
         
@@ -300,8 +247,12 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
                     // Handle Ctrl commands first
                     if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
                         match key.code {
+                            KeyCode::Char('q') | KeyCode::Char('Q') => {
+                                // Ctrl+Q - quit the entire application
+                                return Ok(None);
+                            }
                             KeyCode::Char('c') | KeyCode::Char('C') => {
-                                // Ctrl+C - quit the entire application
+                                // Ctrl+C - also quit
                                 return Ok(None);
                             }
                             _ => {}
@@ -344,8 +295,6 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
                                 query.pop();
                                 selected_index = 0;
                                 scroll_offset = 0;
-                                last_preview_path = None; // Reset preview cache
-                                needs_full_redraw = true; // Full redraw when query changes
                                 // Update nucleo pattern
                                 nucleo.pattern.reparse(
                                     0,
@@ -359,8 +308,6 @@ fn run_fuzzy_picker(files: &[String]) -> Result<Option<PathBuf>> {
                                 query.push(c);
                                 selected_index = 0;
                                 scroll_offset = 0;
-                                last_preview_path = None; // Reset preview cache
-                                needs_full_redraw = true; // Full redraw when query changes
                                 // Update nucleo pattern
                                 nucleo.pattern.reparse(
                                     0,

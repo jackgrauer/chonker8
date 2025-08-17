@@ -26,6 +26,9 @@ pub fn display_pdf_image(
         // Use absolute positioning from top-left corner
         absolute_offset: true,
         
+        // Handle premultiplied alpha
+        premultiplied_alpha: false,
+        
         // Position in terminal
         x,
         y: y as i16,
@@ -66,9 +69,9 @@ pub fn display_pdf_image(
     
     // Create an image 0.24 DynamicImage from raw bytes
     let raw_buffer = rgba.into_raw();
-    let old_image = image_0_24::ImageBuffer::from_raw(width, height, raw_buffer)
+    let old_image = image::ImageBuffer::from_raw(width, height, raw_buffer)
         .ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
-    let old_dynamic = image_0_24::DynamicImage::ImageRgba8(old_image);
+    let old_dynamic = image::DynamicImage::ImageRgba8(old_image);
     
     // Display the image using viuer's automatic protocol detection
     let _ = print(&old_dynamic, &config)?;
@@ -102,6 +105,58 @@ pub fn clear_graphics() -> Result<()> {
     
     // Always clear the area for block mode fallback
     print!("\x1b[2J");
+    io::stdout().flush()?;
+    
+    Ok(())
+}
+
+/// Display a PDF page image with persistence (no clearing)
+/// 
+/// This version avoids clearing graphics to maintain image persistence
+/// between renders in the file picker.
+pub fn display_pdf_image_persistent(
+    image: &image::DynamicImage,
+    x: u16,
+    y: u16,
+    max_width: u16,
+    max_height: u16,
+    dark_mode: bool,
+) -> Result<()> {
+    // Configure viuer display settings for persistence
+    let config = Config {
+        transparent: true,
+        absolute_offset: true,
+        premultiplied_alpha: false,
+        x,
+        y: y as i16,
+        restore_cursor: false,
+        width: Some(max_width as u32),
+        height: Some(max_height as u32),
+        truecolor: true,
+        use_kitty: true,
+        use_iterm: true,
+    };
+    
+    // Convert and apply dark mode filter
+    let mut rgba = image.to_rgba8();
+    let (width, height) = (rgba.width(), rgba.height());
+    
+    if dark_mode {
+        for pixel in rgba.pixels_mut() {
+            pixel[0] = 255 - pixel[0]; // R
+            pixel[1] = 255 - pixel[1]; // G
+            pixel[2] = 255 - pixel[2]; // B
+        }
+    }
+    
+    // Create image and display
+    let raw_buffer = rgba.into_raw();
+    let old_image = image::ImageBuffer::from_raw(width, height, raw_buffer)
+        .ok_or_else(|| anyhow::anyhow!("Failed to create image buffer"))?;
+    let old_dynamic = image::DynamicImage::ImageRgba8(old_image);
+    
+    // Display without clearing - images persist until next one
+    let _ = print(&old_dynamic, &config)?;
     io::stdout().flush()?;
     
     Ok(())
