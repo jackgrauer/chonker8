@@ -1,575 +1,451 @@
-// MINIMAL CHONKER - Just PDF text extraction to editable grid
+// CHONKER8 CLI - PDF text extraction with DuckDB storage
 use anyhow::Result;
-use crossterm::{
-    cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseEvent, MouseEventKind, MouseButton},
-    execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use std::{io::{self, Write}, path::PathBuf, time::Duration};
-use image::DynamicImage;
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
-mod content_extractor;
-mod edit_renderer;
-mod pdf_renderer;
+mod config;
 mod pdf_extraction;
-mod file_picker;
-mod theme;
-mod theme_const;
-mod types;
-mod screen_mode;
-mod viuer_display;
-mod keyboard;
-mod debug_panel;
 mod storage;
-mod migration_tool;
+mod types;
 
-use edit_renderer::EditPanelRenderer;
-use debug_panel::DebugPanel;
-use theme::ChonkerTheme;
-use types::{Pos, Selection, AppFlags, GRID_WIDTH, GRID_HEIGHT};
-use screen_mode::ScreenMode;
-use storage::StorageBackend;
-use std::sync::Mutex;
-
-// Global debug logger
-lazy_static::lazy_static! {
-    static ref DEBUG_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-}
-
-pub fn debug_log<S: Into<String>>(msg: S) {
-    let msg = msg.into();
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    
-    let formatted_msg = format!("[{}] {}", timestamp % 100000, msg);
-    
-    eprintln!("{}", formatted_msg);  // Still print to stderr for debugging
-    if let Ok(mut logs) = DEBUG_LOGS.lock() {
-        logs.push(formatted_msg);
-        if logs.len() > 1000 {
-            logs.remove(0);
-        }
-    }
-}
-
-// Enhanced debug logging macros
-#[macro_export]
-macro_rules! debug_trace {
-    ($($arg:tt)*) => {
-        crate::debug_log(format!("TRACE: {}", format!($($arg)*)));
-    };
-}
-
-#[macro_export]
-macro_rules! debug_error {
-    ($($arg:tt)*) => {
-        crate::debug_log(format!("ERROR: {}", format!($($arg)*)));
-    };
-}
-
-#[macro_export]
-macro_rules! debug_timing {
-    ($name:expr, $start:expr) => {
-        crate::debug_log(format!("TIMING: {} took {:?}", $name, $start.elapsed()));
-    };
-}
-
-#[cfg(target_os = "macos")]
-const MOD_KEY: KeyModifiers = KeyModifiers::SUPER;
-#[cfg(not(target_os = "macos"))]
-const MOD_KEY: KeyModifiers = KeyModifiers::CONTROL;
+use config::{GRID_WIDTH, GRID_HEIGHT};
+use storage::{DuckDBStorage, SearchResult};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(author, version, about = "PDF text extraction with DuckDB storage")]
 struct Args {
-    pdf_file: Option<PathBuf>,
-    #[arg(short, long, default_value_t = 1)]
-    page: usize,
-}
-
-pub struct App {
-    pub pdf_path: PathBuf,
-    pub current_page: usize,
-    pub total_pages: usize,
-    // NEW: Lance/Legacy storage backend
-    pub storage: StorageBackend,
-    pub current_grid: Vec<Vec<char>>,  // Working copy for editing
-    // DELETE: pub edit_data: Option<Vec<Vec<char>>>,
-    pub edit_display: Option<EditPanelRenderer>,
-    pub current_page_image: Option<DynamicImage>,
-    pub cursor: Pos,
-    pub selection: Selection,
-    pub status_message: String,
-    pub flags: AppFlags,
-    pub open_file_picker: bool,
-    pub screen_mode: ScreenMode,
-    pub debug_panel: DebugPanel,
-    pub last_rendered_screen: Option<ScreenMode>,
-}
-
-impl App {
-    pub fn new(pdf_path: PathBuf, start_page: usize) -> Result<Self> {
-        let total_pages = content_extractor::get_page_count(&pdf_path)?;
-        let flags = AppFlags::DARK_MODE | AppFlags::REDRAW;
-        
-        // Initialize storage backend (try Lance first if available)
-        let prefer_lance = cfg!(feature = "lance-storage");
-        let storage = StorageBackend::new(&pdf_path, prefer_lance)?;
-        
-        debug_log(format!("🚀 Chonker8 v8.30.0 - {} storage backend", storage.storage_type()));
-        
-        Ok(Self {
-            pdf_path,
-            current_page: start_page.saturating_sub(1),
-            total_pages,
-            storage,
-            current_grid: vec![vec![' '; GRID_WIDTH]; GRID_HEIGHT],
-            edit_display: None,
-            current_page_image: None,
-            cursor: Pos::default(),
-            selection: Selection::None,
-            status_message: String::new(),
-            flags,
-            open_file_picker: false,
-            screen_mode: ScreenMode::Editor,  // Start with editor
-            debug_panel: DebugPanel::new(),
-            last_rendered_screen: None,
-        })
-    }
-
-    pub async fn load_pdf_page(&mut self) -> Result<()> {
-        debug_log(format!("=== Loading PDF page {} from {} ===", self.current_page, self.storage.storage_type()));
-        
-        // Try to load from storage first
-        self.current_grid = self.storage.load_page(self.current_page)?;
-        
-        // Check if it's empty (not yet extracted)
-        let is_empty = self.current_grid.iter()
-            .all(|row| row.iter().all(|&c| c == ' '));
-        
-        if is_empty {
-            debug_log("Page not in storage, extracting...");
-            
-            // Render PDF image for display
-            debug_log("Rendering PDF page as image...");
-            let start = std::time::Instant::now();
-            match pdf_renderer::render_pdf_page(&self.pdf_path, self.current_page, 800, 1000) {
-                Ok(image) => {
-                    debug_log(format!("PDF rendered successfully: {}x{} pixels", image.width(), image.height()));
-                    self.current_page_image = Some(image);
-                    debug_timing!("PDF rendering", start);
-                }
-                Err(e) => {
-                    debug_error!("Failed to render PDF: {}", e);
-                    return Err(e);
-                }
-            }
-            
-            // Extract text to grid
-            debug_log(format!("Extracting text to {}x{} grid...", GRID_WIDTH, GRID_HEIGHT));
-            let start = std::time::Instant::now();
-            match pdf_extraction::extract_to_matrix(&self.pdf_path, self.current_page, GRID_WIDTH, GRID_HEIGHT).await {
-                Ok(data) => {
-                    debug_log("Text extraction successful");
-                    self.current_grid = data;
-                    debug_timing!("Text extraction", start);
-                    
-                    // Save to storage for next time
-                    let version = self.storage.save_page(self.current_page, self.current_grid.clone())?;
-                    debug_log(format!("Saved to storage version {}", version));
-                }
-                Err(e) => {
-                    debug_error!("Failed to extract text: {}", e);
-                    return Err(e);
-                }
-            }
-        } else {
-            debug_log(format!("Loaded page {} from storage (v{})", self.current_page, self.storage.current_version()));
-        }
-        
-        // Update display renderer
-        let non_empty = self.current_grid.iter()
-            .flat_map(|row| row.iter())
-            .filter(|&&c| c != ' ')
-            .count();
-        debug_log(format!("Grid populated: {} non-space characters", non_empty));
-        
-        if let Some(renderer) = &mut self.edit_display {
-            renderer.update_buffer(&self.current_grid);
-        } else {
-            let mut renderer = EditPanelRenderer::new(GRID_WIDTH as u16, GRID_HEIGHT as u16);
-            renderer.update_buffer(&self.current_grid);
-            self.edit_display = Some(renderer);
-        }
-        
-        debug_log(format!("=== Page {} loaded successfully ===", self.current_page));
-        Ok(())
-    }
-
-    pub async fn extract_current_page(&mut self) -> Result<()> {
-        self.current_grid = pdf_extraction::extract_to_matrix(&self.pdf_path, self.current_page, GRID_WIDTH, GRID_HEIGHT).await?;
-        
-        // Save to storage
-        let version = self.storage.save_page(self.current_page, self.current_grid.clone())?;
-        debug_log(format!("Re-extracted page {} saved as version {}", self.current_page, version));
-        
-        if let Some(renderer) = &mut self.edit_display {
-            renderer.update_buffer(&self.current_grid);
-        } else {
-            let mut renderer = EditPanelRenderer::new(GRID_WIDTH as u16, GRID_HEIGHT as u16);
-            renderer.update_buffer(&self.current_grid);
-            self.edit_display = Some(renderer);
-        }
-        
-        self.status_message = "Text extracted".to_string();
-        Ok(())
-    }
-
-    // Consolidated page change function
-    pub fn change_page(&mut self, delta: i32) -> bool {
-        let new_page = (self.current_page as i32 + delta)
-            .clamp(0, self.total_pages as i32 - 1) as usize;
-        
-        if new_page != self.current_page {
-            let _ = viuer_display::clear_graphics();
-            self.current_page = new_page;
-            self.clear_page_state();
-            true
-        } else {
-            false
-        }
-    }
+    #[command(subcommand)]
+    command: Commands,
     
-    fn clear_page_state(&mut self) {
-        // Current grid is now managed by storage backend
-        self.edit_display = None;
-        self.current_page_image = None;
-        self.cursor = Pos::default();
-        self.selection = Selection::None;
-        self.flags.insert(AppFlags::REDRAW);
-    }
+    /// Database file path (uses in-memory if not specified)
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Extract text from a PDF file
+    Extract {
+        /// PDF file to extract text from
+        pdf_file: PathBuf,
+        
+        /// Page number to extract (1-based indexing)
+        #[arg(short, long, default_value_t = 1)]
+        page: usize,
+        
+        /// Output format: grid, text, json
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        
+        /// Save extracted text to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        
+        /// Grid width for extraction
+        #[arg(long, default_value_t = GRID_WIDTH)]
+        width: usize,
+        
+        /// Grid height for extraction  
+        #[arg(long, default_value_t = GRID_HEIGHT)]
+        height: usize,
+        
+        /// Use AI-powered extraction (slower but better)
+        #[arg(long)]
+        ai: bool,
+        
+        /// Show extraction statistics
+        #[arg(long)]
+        stats: bool,
+        
+        /// Store in database
+        #[arg(long)]
+        store: bool,
+        
+        /// Raw output without headers
+        #[arg(long)]
+        raw: bool,
+        
+        /// Show visual rendering as dots/braille
+        #[arg(long)]
+        visual: bool,
+        
+        /// Compare text extraction vs visual rendering
+        #[arg(long)]
+        compare: bool,
+    },
+    
+    /// Search for text in stored documents
+    Search {
+        /// Search query
+        query: String,
+        
+        /// Limit number of results
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+    
+    /// List all stored documents
+    List,
+    
+    /// Show database statistics
+    Stats,
+    
+    /// Execute custom SQL query
+    Query {
+        /// SQL query to execute
+        sql: String,
+    },
+    
+    /// Load document from database
+    Load {
+        /// Document ID or path
+        doc: String,
+        
+        /// Page number to load
+        #[arg(short, long)]
+        page: Option<usize>,
+    },
+    
+    /// Force save database to disk
+    Save,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     
-    let pdf_path = if let Some(path) = args.pdf_file {
-        path
-    } else {
-        // Use file picker
-        println!("🐹 Launching Chonker file picker...");
-        if let Some(path) = file_picker::pick_pdf_file()? {
-            println!("Selected: {}", path.display());
-            path
-        } else {
-            println!("No file selected");
-            return Ok(());
-        }
-    };
-
-    let mut app = App::new(pdf_path, args.page)?;
-    app.load_pdf_page().await?;
+    // Create database connection (starts in memory, auto-flushes when needed)
+    let mut db = DuckDBStorage::new(args.db.as_deref())?;
     
-    setup_terminal()?;
-    let result = run_app(&mut app).await;
-    restore_terminal()?;
-    
-    result
-}
-
-fn setup_terminal() -> Result<()> {
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
-    Ok(())
-}
-
-fn restore_terminal() -> Result<()> {
-    let _ = viuer_display::clear_graphics();
-    execute!(io::stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
-    execute!(io::stdout(), Show, LeaveAlternateScreen, DisableMouseCapture)?;
-    disable_raw_mode()?;
-    Ok(())
-}
-
-async fn run_app(app: &mut App) -> Result<()> {
-    let mut stdout = io::stdout();
-    let mut last_term_size = (0, 0);
-    
-    // Initial render
-    app.flags.insert(AppFlags::REDRAW);
-    
-    // Remove file picker screen mode initialization
-    
-    loop {
-        let (term_width, term_height) = terminal::size()?;
-        let panel_width = term_width / 3;
-        
-        // Check if terminal was resized or screen changed
-        if (term_width, term_height) != last_term_size || 
-           app.last_rendered_screen != Some(app.screen_mode) {
-            app.flags.insert(AppFlags::REDRAW);
-            last_term_size = (term_width, term_height);
-            app.last_rendered_screen = Some(app.screen_mode);
-        }
-        
-        // Check if we need to open file picker
-        if app.open_file_picker {
-            app.open_file_picker = false;
-            restore_terminal()?;
-            
-            if let Some(new_path) = file_picker::pick_pdf_file()? {
-                app.pdf_path = new_path;
-                app.current_page = 0;
-                app.total_pages = content_extractor::get_page_count(&app.pdf_path)?;
-                app.load_pdf_page().await?;
-                app.flags.insert(AppFlags::REDRAW);
+    match args.command {
+        Commands::Extract { 
+            pdf_file, 
+            page, 
+            format, 
+            output, 
+            width, 
+            height, 
+            ai, 
+            stats,
+            store,
+            raw,
+            visual,
+            compare,
+        } => {
+            // Validate inputs
+            if !pdf_file.exists() {
+                eprintln!("Error: PDF file '{}' does not exist", pdf_file.display());
+                std::process::exit(1);
             }
             
-            setup_terminal()?;
-            app.flags.insert(AppFlags::REDRAW);
-        }
-        
-        // Only redraw when necessary
-        if app.flags.contains(AppFlags::REDRAW) {
-            execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+            // Get page count
+            let total_pages = pdf_extraction::get_page_count(&pdf_file)?;
+            if page == 0 || page > total_pages {
+                eprintln!("Error: Page {} is out of range (1-{})", page, total_pages);
+                std::process::exit(1);
+            }
             
-            match app.screen_mode {
-                ScreenMode::Editor => {
-                    // Add header for Editor mode
-                    use theme_const::HEADER_PDF;
-                    render_panel_header(&mut stdout, 0, 0, term_width, 
-                        "PDF EDITOR", 
-                        HEADER_PDF, true)?;
-                    
-                    // Split screen: PDF view (left) + Text editor (right)
-                    let split_x = term_width / 2;
-                    
-                    // Render PDF image on left (below header)
-                    if let Some(image) = &app.current_page_image {
-                        let _ = viuer_display::display_pdf_image(
-                            image, 0, 1, split_x - 1, term_height - 3, 
-                            app.flags.contains(AppFlags::DARK_MODE)
-                        );
+            let page_index = page - 1; // Convert to 0-based
+            
+            if !raw {
+                println!("Extracting page {} from '{}'...", page, pdf_file.display());
+            }
+            
+            // Extract text and/or visual
+            let start_time = std::time::Instant::now();
+            
+            // Always do text extraction
+            let text_grid = if ai {
+                if !raw { println!("Using Ferrules for structured extraction..."); }
+                pdf_extraction::extract_with_ferrules(&pdf_file, page_index, width, height).await
+                    .unwrap_or_else(|e| {
+                        if !raw { println!("Ferrules failed ({}), falling back to PDFium...", e); }
+                        tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(
+                                pdf_extraction::improved::extract_with_word_grouping(&pdf_file, page_index, width, height)
+                            )
+                        }).unwrap_or_else(|_| vec![vec![' '; width]; height])
+                    })
+            } else {
+                pdf_extraction::improved::extract_with_word_grouping(&pdf_file, page_index, width, height).await?
+            };
+            
+            // Optionally do visual rendering (TRUE ground truth showing actual character positions)
+            let visual_grid = if visual || compare {
+                if !raw { println!("Generating TRUE visual ground truth (actual character positions)..."); }
+                pdf_extraction::render_true_visual(&pdf_file, page_index, width, height).await?
+            } else {
+                vec![]
+            };
+            
+            let extraction_time = start_time.elapsed();
+            
+            // Choose which grid to use for main output
+            let grid = if visual && !compare {
+                visual_grid.clone()
+            } else {
+                text_grid.clone()
+            };
+            
+            // Store in database if requested
+            if store {
+                let doc_id = db.register_document(&pdf_file, total_pages)?;
+                db.save_page(doc_id, page, &grid, width, height)?;
+                println!("Stored in database (document ID: {})", doc_id);
+            }
+            
+            // Format output
+            let output_text = match format.as_str() {
+                "grid" => format_as_grid(&grid),
+                "json" => format_as_json(&grid)?,
+                "text" | _ => format_as_text(&grid),
+            };
+            
+            // Output results
+            if compare {
+                // Show both extractions side by side
+                if !raw {
+                    println!("\n--- CONVERGENCE COMPARISON ---");
+                    println!("Left: Visual Ground Truth (PDF) | Right: PDFium Text Extraction");
+                    println!("{}", "=".repeat(80));
+                }
+                show_comparison(&visual_grid, &text_grid);  // Swapped order!
+            } else if let Some(output_path) = output {
+                std::fs::write(&output_path, &output_text)?;
+                if !raw {
+                    println!("Text saved to '{}'", output_path.display());
+                }
+            } else if raw {
+                // Raw output - just the text, no headers
+                print!("{}", output_text);
+            } else {
+                println!("\n--- Extracted Text ---");
+                println!("{}", output_text);
+            }
+            
+            // Show statistics
+            if stats {
+                let char_count = grid.iter()
+                    .flat_map(|row| row.iter())
+                    .filter(|&&c| c != ' ')
+                    .count();
+                
+                println!("\n--- Statistics ---");
+                println!("Extraction time: {:?}", extraction_time);
+                println!("Grid size: {}x{}", width, height);
+                println!("Characters extracted: {}", char_count);
+                println!("Total pages in PDF: {}", total_pages);
+            }
+        },
+        
+        Commands::Search { query, limit } => {
+            let results = db.search_text(&query)?;
+            
+            if results.is_empty() {
+                println!("No results found for '{}'", query);
+            } else {
+                println!("Found {} results for '{}':\n", results.len().min(limit), query);
+                
+                for (i, result) in results.iter().take(limit).enumerate() {
+                    println!("{}. {} (page {})", i + 1, result.filename, result.page_num);
+                    println!("   Line {}: {}", result.line_num, result.text);
+                    println!("   Path: {}\n", result.path);
+                }
+            }
+        },
+        
+        Commands::List => {
+            let docs = db.list_documents()?;
+            
+            if docs.is_empty() {
+                println!("No documents in database");
+            } else {
+                println!("Documents in database:\n");
+                println!("{:<4} {:<40} {:<10} {:<10}", "ID", "Filename", "Pages", "Size");
+                println!("{}", "-".repeat(70));
+                
+                for doc in docs {
+                    let size_mb = doc.file_size as f64 / (1024.0 * 1024.0);
+                    println!("{:<4} {:<40} {:<10} {:<10.2}MB", 
+                        doc.id, 
+                        truncate(&doc.filename, 40),
+                        doc.total_pages,
+                        size_mb
+                    );
+                }
+            }
+        },
+        
+        Commands::Stats => {
+            let stats = db.get_stats()?;
+            
+            println!("Database Statistics:");
+            println!("-------------------");
+            println!("Documents:     {}", stats.document_count);
+            println!("Pages:         {}", stats.page_count);
+            println!("Characters:    {}", stats.total_characters);
+            println!("Total Size:    {:.2} MB", stats.total_file_size as f64 / (1024.0 * 1024.0));
+            
+            if stats.page_count > 0 {
+                let avg_chars = stats.total_characters / stats.page_count;
+                println!("Avg chars/page: {}", avg_chars);
+            }
+        },
+        
+        Commands::Query { sql } => {
+            match db.query(&sql) {
+                Ok(rows) => {
+                    if rows.is_empty() {
+                        println!("No results");
+                    } else {
+                        for row in rows {
+                            println!("{}", row.join(" | "));
+                        }
                     }
-                    
-                    // Render text editor on right (no header, clean view)
-                    if let Some(renderer) = &app.edit_display {
-                        // Need to get back the old selection format temporarily
-                        let sel_start = if let Selection::Active { start, .. } = app.selection {
-                            Some((start.x, start.y))
-                        } else { None };
-                        let sel_end = if let Selection::Active { end, .. } = app.selection {
-                            Some((end.x, end.y))
-                        } else { None };
-                        
-                        renderer.render_with_cursor_and_selection(
-                            split_x, 1, term_width - split_x, term_height - 3,
-                            (app.cursor.x, app.cursor.y),
-                            sel_start,
-                            sel_end
-                        )?;
-                    }
+                },
+                Err(e) => {
+                    eprintln!("Query error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
+        
+        Commands::Load { doc, page } => {
+            // Try to parse as document ID or use as path
+            let doc_id: i64 = if let Ok(id) = doc.parse() {
+                id
+            } else {
+                // Look up by path
+                let results = db.query(&format!(
+                    "SELECT id FROM documents WHERE path LIKE '%{}%' LIMIT 1", 
+                    doc
+                ))?;
+                
+                if results.is_empty() {
+                    eprintln!("Document not found: {}", doc);
+                    std::process::exit(1);
                 }
                 
-                ScreenMode::Debug => {
-                    // Full screen debug output with soft green header
-                    use theme_const::HEADER_DEBUG;
-                    render_panel_header(&mut stdout, 0, 0, term_width, 
-                        "DEBUG LOG - Ctrl+C to copy", 
-                        HEADER_DEBUG, true)?;
-                    
-                    // Sync global logs to debug panel
-                    if let Ok(logs) = DEBUG_LOGS.lock() {
-                        app.debug_panel.logs = logs.clone();
-                    }
-                    
-                    app.debug_panel.render(0, 1, term_width, term_height - 3)?;
-                }
-            }
+                results[0][0].parse()?
+            };
             
-            // Status bar
-            render_status_bar(&mut stdout, app, term_width, term_height)?;
-            
-            stdout.flush()?;
-            app.flags.remove(AppFlags::REDRAW);
-        }
+            // Load specific page or all pages
+            if let Some(page_num) = page {
+                match db.load_page(doc_id, page_num) {
+                    Ok(grid) => {
+                        let text = format_as_text(&grid);
+                        println!("{}", text);
+                    },
+                    Err(e) => {
+                        eprintln!("Error loading page: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // Load document info
+                let doc_info = db.query(&format!(
+                    "SELECT filename, total_pages FROM documents WHERE id = {}", 
+                    doc_id
+                ))?;
+                
+                if !doc_info.is_empty() {
+                    println!("Document: {}", doc_info[0][0]);
+                    println!("Total pages: {}", doc_info[0][1]);
+                }
+            }
+        },
         
-        // Handle input
-        if event::poll(Duration::from_millis(50))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    let old_cursor = app.cursor;
-                    let old_selection = app.selection.clone();
-                    
-                    if !keyboard::handle_input(app, key).await? {
-                        break;
-                    }
-                    if app.flags.contains(AppFlags::EXIT) {
-                        break;
-                    }
-                    
-                    // Only redraw if something visual changed
-                    // Don't redraw for simple cursor movements or selections
-                    let cursor_or_selection_changed = app.cursor != old_cursor || 
-                        app.selection != old_selection;
-                    
-                    if cursor_or_selection_changed && app.screen_mode == ScreenMode::Editor {
-                        // Only update the text area, not the whole screen
-                        if let Some(renderer) = &app.edit_display {
-                            let split_x = term_width / 2;
-                            let sel_start = if let Selection::Active { start, .. } = app.selection {
-                                Some((start.x, start.y))
-                            } else { None };
-                            let sel_end = if let Selection::Active { end, .. } = app.selection {
-                                Some((end.x, end.y))
-                            } else { None };
-                            
-                            renderer.render_with_cursor_and_selection(
-                                split_x, 1, term_width - split_x, term_height - 3,
-                                (app.cursor.x, app.cursor.y),
-                                sel_start,
-                                sel_end
-                            )?;
-                            stdout.flush()?;
-                        }
-                    } else {
-                        // For other changes, do full redraw
-                        app.flags.insert(AppFlags::REDRAW);
-                    }
-                }
-                Event::Mouse(mouse) => {
-                    if app.screen_mode == ScreenMode::Debug {
-                        // Handle debug panel mouse events
-                        if app.debug_panel.handle_mouse(mouse) {
-                            app.flags.insert(AppFlags::REDRAW);
-                        }
-                    } else if app.screen_mode == ScreenMode::Editor {
-                        handle_mouse_event(app, mouse, term_width / 2, term_height)?;
-                        
-                        // Update display for selection changes
-                        if let Some(renderer) = &app.edit_display {
-                            let split_x = term_width / 2;
-                            let sel_start = if let Selection::Active { start, .. } = app.selection {
-                                Some((start.x, start.y))
-                            } else { None };
-                            let sel_end = if let Selection::Active { end, .. } = app.selection {
-                                Some((end.x, end.y))
-                            } else { None };
-                            
-                            renderer.render_with_cursor_and_selection(
-                                split_x, 1, term_width - split_x, term_height - 3,
-                                (app.cursor.x, app.cursor.y),
-                                sel_start,
-                                sel_end
-                            )?;
-                            stdout.flush()?;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        Commands::Save => {
+            println!("Saving database to disk...");
+            db.force_save()?;
+            println!("Database saved successfully!");
+        },
     }
     
     Ok(())
 }
 
-fn render_panel_header(stdout: &mut io::Stdout, x: u16, y: u16, width: u16, title: &str, color: Color, is_active: bool) -> Result<()> {
-    execute!(stdout, MoveTo(x, y))?;
-    execute!(stdout, SetBackgroundColor(color))?;
-    execute!(stdout, SetForegroundColor(Color::Black))?;
-    
-    let indicator = if is_active { "●" } else { "○" };
-    let header_text = format!(" {} {} ", indicator, title);
-    write!(stdout, "{:^width$}", header_text, width = width as usize)?;
-    
-    execute!(stdout, ResetColor)?;
-    Ok(())
+fn format_as_text(grid: &[Vec<char>]) -> String {
+    grid.iter()
+        .map(|row| {
+            let line: String = row.iter().collect();
+            line.trim_end().to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn handle_mouse_event(app: &mut App, mouse: MouseEvent, split_x: u16, term_height: u16) -> Result<()> {
-    // Only handle mouse in text panel (right side) and below header
-    if mouse.column <= split_x || mouse.row == 0 || mouse.row >= term_height - 2 {
-        return Ok(());
+fn format_as_grid(grid: &[Vec<char>]) -> String {
+    grid.iter()
+        .map(|row| row.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_as_json(grid: &[Vec<char>]) -> Result<String> {
+    use serde_json::json;
+    
+    let rows: Vec<String> = grid.iter()
+        .map(|row| row.iter().collect())
+        .collect();
+    
+    let output = json!({
+        "grid": rows,
+        "width": grid.get(0).map(|r| r.len()).unwrap_or(0),
+        "height": grid.len(),
+        "format": "character_grid"
+    });
+    
+    Ok(serde_json::to_string_pretty(&output)?)
+}
+
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len - 3])
     }
+}
+
+fn show_comparison(text_grid: &[Vec<char>], visual_grid: &[Vec<char>]) {
+    let max_lines = text_grid.len().min(visual_grid.len());
     
-    // Convert screen coordinates to text buffer coordinates (account for header)
-    let text_x = (mouse.column - split_x) as usize;
-    let text_y = (mouse.row - 1) as usize; // Subtract 1 for header
-    
-    if let Some(renderer) = &app.edit_display {
-        let (scroll_x, scroll_y) = renderer.get_scroll();
-        let buffer_x = text_x + scroll_x as usize;
-        let buffer_y = text_y + scroll_y as usize;
+    for i in 0..max_lines {
+        let text_line: String = text_grid.get(i)
+            .map(|row| row.iter().collect())
+            .unwrap_or_default();
+        let visual_line: String = visual_grid.get(i)
+            .map(|row| row.iter().collect())
+            .unwrap_or_default();
         
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Start selection
-                app.cursor = Pos { x: buffer_x, y: buffer_y };
-                app.selection = Selection::Active { 
-                    start: app.cursor, 
-                    end: app.cursor 
-                };
-                app.flags.insert(AppFlags::SELECTING);
+        // Show first 40 chars of each side by side
+        let text_part: String = text_line.chars().take(40).collect();
+        let visual_part: String = visual_line.chars().take(40).collect();
+        
+        println!("{:<40} | {:<40}", text_part, visual_part);
+    }
+    
+    // Calculate convergence score
+    let mut matches = 0;
+    let mut total = 0;
+    
+    for (text_row, visual_row) in text_grid.iter().zip(visual_grid.iter()) {
+        for (t_char, v_char) in text_row.iter().zip(visual_row.iter()) {
+            total += 1;
+            let t_has_content = *t_char != ' ';
+            let v_has_content = *v_char != ' ' && *v_char != '⠀';
+            if t_has_content == v_has_content {
+                matches += 1;
             }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                // Continue selection
-                if app.flags.contains(AppFlags::SELECTING) {
-                    app.cursor = Pos { x: buffer_x, y: buffer_y };
-                    if let Selection::Active { start, .. } = app.selection {
-                        app.selection = Selection::Active { start, end: app.cursor };
-                    }
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                // End selection
-                if app.flags.contains(AppFlags::SELECTING) {
-                    app.cursor = Pos { x: buffer_x, y: buffer_y };
-                    if let Selection::Active { start, .. } = app.selection {
-                        if start == app.cursor {
-                            app.selection = Selection::None;
-                        } else {
-                            app.selection = Selection::Active { start, end: app.cursor };
-                        }
-                    }
-                    app.flags.remove(AppFlags::SELECTING);
-                }
-            }
-            _ => {}
         }
     }
     
-    Ok(())
-}
-
-fn render_status_bar(stdout: &mut io::Stdout, app: &App, width: u16, height: u16) -> Result<()> {
-    execute!(stdout, MoveTo(0, height - 1))?;
-    execute!(stdout, SetBackgroundColor(ChonkerTheme::bg_status_dark()))?;
-    execute!(stdout, SetForegroundColor(ChonkerTheme::text_status_dark()))?;
-    
-    let screen_name = match app.screen_mode {
-        ScreenMode::Editor => "EDITOR",
-        ScreenMode::Debug => "DEBUG",
+    let convergence = if total > 0 {
+        matches as f32 / total as f32 * 100.0
+    } else {
+        0.0
     };
     
-    let status = format!(
-        " {} | Page {}/{} | {} | Tab: Switch | Ctrl+O: Open | Ctrl+C: Quit ",
-        screen_name,
-        app.current_page + 1,
-        app.total_pages,
-        if app.status_message.is_empty() { "Ready" } else { &app.status_message }
-    );
-    
-    let status_len = status.len();
-    execute!(stdout, Print(status))?;
-    execute!(stdout, Print(" ".repeat((width as usize).saturating_sub(status_len))))?;
-    execute!(stdout, ResetColor)?;
-    
-    Ok(())
+    println!("\n📊 Convergence Score: {:.1}%", convergence);
 }

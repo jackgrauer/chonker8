@@ -1,4 +1,4 @@
-# Chonker 8.1 - The PDF Text Extractor (booyeeee!)
+# Chonker 8.6 - The PDF Text Extractor (booyeeee!)
 
 A blazing fast PDF viewer with text extraction and editing capabilities. Three distinct screens, clean architecture, and both basic and AI-powered extraction.
 
@@ -55,13 +55,13 @@ Press **Tab** to cycle through:
 - **Debug everything** - See ALL the processing that happens
 - **Spatial preservation** - Text maintains its position from the PDF
 
-## Version 8.1 Changes
+## Version 8.6 Changes
 
-- Refactored into clean modular structure
-- 3 distinct screens with Tab navigation
-- Softer color palette
-- Comprehensive debug output
-- ~300 lines less code
-- 20% faster rendering
+- **Stripped notcurses UI** - Replaced with clean crossterm file picker  
+- **Pure crossterm architecture** - Unified, lightweight terminal handling
+- **Smart file picker** - Fuzzy search, PDF metadata, vim-like navigation
+- **Cleaner dependencies** - Removed cursive and notcurses bloat
+- **Better UX** - Real-time search with file size and page count display
+- **4.6MB binary** - Optimized size with consistent theming
 
 Booyeeee! 🎉

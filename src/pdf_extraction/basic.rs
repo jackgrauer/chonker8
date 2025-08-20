@@ -2,6 +2,7 @@
 use anyhow::Result;
 use pdfium_render::prelude::*;
 use std::path::Path;
+use crate::config;
 
 pub async fn extract_to_matrix(
     pdf_path: &Path,
@@ -9,9 +10,9 @@ pub async fn extract_to_matrix(
     width: usize,
     height: usize,
 ) -> Result<Vec<Vec<char>>> {
-    crate::debug_log(format!("Extracting page {} from {:?}", page_num, pdf_path));
+    let lib_path = config::pdfium_library_path();
     let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib/"))?
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&lib_path))?
     );
     
     let document = pdfium.load_pdf_from_file(pdf_path, None)?;
@@ -44,7 +45,6 @@ pub async fn extract_to_matrix(
         }
     }
     
-    crate::debug_log(format!("Found {} characters, extracted {} positioned chars", char_count, char_positions.len()));
     
     // Sort by y position (top to bottom), then x position (left to right)
     char_positions.sort_by(|a, b| {
@@ -77,8 +77,9 @@ pub async fn extract_with_ml(_pdf_path: &Path, _page_num: usize, width: usize, h
 }
 
 pub fn get_page_count(pdf_path: &Path) -> Result<usize> {
+    let lib_path = config::pdfium_library_path();
     let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib/"))?
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&lib_path))?
     );
     let document = pdfium.load_pdf_from_file(pdf_path, None)?;
     Ok(document.pages().len() as usize)

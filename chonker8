@@ -1,0 +1,10 @@
+#!/bin/bash
+# Wrapper script for chonker8 that sets the library path correctly
+export DYLD_LIBRARY_PATH="/Users/jack/chonker8/lib:$DYLD_LIBRARY_PATH"
+
+# If no arguments, extract from the default PDF
+if [ $# -eq 0 ]; then
+    exec /Users/jack/chonker8/target/release/chonker8 extract "/Users/jack/Documents/chonker_test.pdf" --page 1 --raw
+else
+    exec /Users/jack/chonker8/target/release/chonker8 "$@"
+fi

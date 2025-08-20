@@ -1,44 +1,48 @@
-// LEGACY STORAGE BACKEND
-// Maintains existing Vec<Vec<char>> behavior for backwards compatibility
+// OPTIMIZED STORAGE BACKEND with LRU Cache
+// Only keeps configured number of pages in memory to prevent memory bloat
 
-use crate::types::{GRID_WIDTH, GRID_HEIGHT};
+use crate::config::{GRID_WIDTH, GRID_HEIGHT, MAX_CACHED_PAGES};
 use anyhow::Result;
-use std::collections::HashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
-/// Legacy in-memory storage using HashMap<page_num, Vec<Vec<char>>>
+/// Optimized storage using LRU cache - only keeps 5 pages in memory
 #[derive(Debug)]
 pub struct LegacyStorage {
-    pages: HashMap<usize, Vec<Vec<char>>>,
+    pages: LruCache<usize, Vec<Vec<char>>>,
 }
 
 impl LegacyStorage {
     pub fn new() -> Self {
+        let cache_size = NonZeroUsize::new(MAX_CACHED_PAGES).unwrap();
         Self {
-            pages: HashMap::new(),
+            pages: LruCache::new(cache_size),
         }
     }
     
-    /// Save page grid (just stores in HashMap)
+    /// Save page grid (stores in LRU cache, evicts oldest if at capacity)
     pub fn save_page(&mut self, page_num: usize, grid: Vec<Vec<char>>) -> Result<u64> {
-        self.pages.insert(page_num, grid);
-        crate::debug_log(format!("Legacy: Saved page {} to memory", page_num));
-        Ok(1) // Always version 1 in legacy
+        // LRU cache automatically evicts least recently used page if at capacity
+        let evicted = self.pages.push(page_num, grid);
+        
+        if evicted.is_some() {
+            // Evicted old page
+        }
+        Ok(1) // Always version 1
     }
     
     /// Load page grid (returns empty grid if not found)
-    pub fn load_page(&self, page_num: usize) -> Result<Vec<Vec<char>>> {
+    pub fn load_page(&mut self, page_num: usize) -> Result<Vec<Vec<char>>> {
         if let Some(grid) = self.pages.get(&page_num) {
-            crate::debug_log(format!("Legacy: Loaded page {} from memory", page_num));
             Ok(grid.clone())
         } else {
-            crate::debug_log(format!("Legacy: Page {} not found, returning empty grid", page_num));
             Ok(vec![vec![' '; GRID_WIDTH]; GRID_HEIGHT])
         }
     }
     
     /// Check if page exists
     pub fn has_page(&self, page_num: usize) -> bool {
-        self.pages.contains_key(&page_num)
+        self.pages.contains(&page_num)
     }
     
     /// Get total pages stored
@@ -49,7 +53,27 @@ impl LegacyStorage {
     /// Clear all pages (for testing)
     pub fn clear(&mut self) {
         self.pages.clear();
-        crate::debug_log("Legacy: Cleared all pages from memory");
+    }
+    
+    
+    /// Get current version (always 1 for legacy)
+    pub fn current_version(&self) -> u64 {
+        1
+    }
+    
+    /// Undo last change (not supported)
+    pub fn undo(&mut self) -> Result<bool> {
+        Ok(false)
+    }
+    
+    /// Redo last undo (not supported)
+    pub fn redo(&mut self) -> Result<bool> {
+        Ok(false)
+    }
+    
+    /// Get storage type for UI display
+    pub fn storage_type(&self) -> &'static str {
+        "LRU Cache"
     }
 }
 
