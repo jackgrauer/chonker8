@@ -4,3 +4,14 @@ Cargo.lock
 *.swp
 .vscode/
 .idea/
+# Large model files
+models/*.onnx
+models/*.safetensors
+models/*.bin
+models/*.pth
+
+# Database files  
+*.db
+
+# Library files
+lib/*.dylib
