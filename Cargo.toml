@@ -14,7 +14,10 @@ thiserror = "1.0"
 whatlang = "0.16"  # Language detection for gibberish detection
 
 # PDF extraction
-ferrules-core = { path = "ferrules/ferrules-core" }
+# ferrules-core = { path = "ferrules/ferrules-core" }  # FIRED - replaced with oar-ocr
+oar-ocr = "0.1"
+ort = { version = "2.0.0-rc.10", features = ["coreml"] }
+image = "0.25"
 pdfium-render = { version = "0.8", features = ["thread_safe"] }
 # Note: Using pdftotext directly instead of extractous due to build issues
 

@@ -226,10 +226,10 @@ async fn main() -> Result<()> {
                     })
             } else if use_ocr {
                 if !raw && mode == "auto" { println!("🔍 Trying OCR extraction (best quality)..."); }
-                else if !raw { println!("Using Ferrules for structured extraction..."); }
+                else if !raw { println!("🚀 Using OAR-OCR with Metal acceleration..."); }
                 
-                // Try Ferrules first
-                match pdf_extraction::extract_with_ferrules(&pdf_file, page_index, width, height).await {
+                // Try OAR-OCR first (Ferrules has been FIRED)
+                match pdf_extraction::extract_with_oar(&pdf_file, page_index, width, height).await {
                     Ok(grid) => {
                         // Check for poor OCR quality using language detection
                         use whatlang::detect;
@@ -289,7 +289,7 @@ async fn main() -> Result<()> {
                     },
                     Err(e) => {
                         if !raw { 
-                            println!("⚡ Ferrules failed ({}), trying pdftotext...", e); 
+                            println!("⚡ OAR-OCR failed ({}), trying pdftotext...", e); 
                         }
                         // Try pdftotext as fallback
                         pdf_extraction::extract_with_extractous_advanced(&pdf_file, page_index, width, height).await
@@ -556,7 +556,7 @@ async fn main() -> Result<()> {
                             
                             match mode.as_str() {
                                 "auto" | "ocr" => {
-                                    match pdf_extraction::extract_with_ferrules(&pdf_file, page_index, GRID_WIDTH, GRID_HEIGHT).await {
+                                    match pdf_extraction::extract_with_oar(&pdf_file, page_index, GRID_WIDTH, GRID_HEIGHT).await {
                                         Ok(_) => {
                                             println!("  ✅ Page {} extracted with OCR", page);
                                             if store {
