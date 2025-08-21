@@ -1,0 +1,32 @@
+mode = "full"  # split, full, minimal
+
+[layout]
+left_panel = "pdf"     # pdf, text, none
+right_panel = "text"   # text, grid, debug, none
+status_bar = true
+
+[theme]
+border = "none"        # rounded, sharp, none
+highlight = "red"
+background = "none"     # black, none (none = use terminal default)
+text_color = "white"
+clear_on_resize = true  # Clear screen on terminal resize
+
+[panels.pdf]
+width_percent = 50
+show_page_num = true
+show_scroll_bar = true
+
+[panels.text]
+width_percent = 50
+show_cursor = true
+wrap_text = false
+line_numbers = false
+
+[hotkeys]
+quit = "q"
+next_page = "n"
+prev_page = "p"
+toggle_wrap = "w"
+toggle_mode = "m"
+reload_config = "r"
