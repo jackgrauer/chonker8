@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Test script to show multiple PDF extractions with the intelligent Ferrules/pdftotext system
+# Test script to show multiple PDF extractions with the intelligent OAR-OCR/pdftotext system
 
 echo "=========================================="
 echo "CHONKER8 - MULTI-PDF EXTRACTION TEST"
@@ -17,8 +17,8 @@ export DYLD_LIBRARY_PATH="/Users/jack/chonker8/lib"
 PDFS=(
     "/Users/jack/Documents/chonker_test.pdf:Tax Document (should trigger pdftotext)"
     "/Users/jack/Documents/test.pdf:Table Document (should trigger pdftotext)"
-    "/Users/jack/Desktop/BERF-CERT.pdf:Birth Certificate (should work with Ferrules)"
-    "/Users/jack/Desktop/journal_entry (5).pdf:Journal Entry (should work with Ferrules)"
+    "/Users/jack/Desktop/BERF-CERT.pdf:Birth Certificate (should work with OAR-OCR)"
+    "/Users/jack/Desktop/journal_entry (5).pdf:Journal Entry (should work with OAR-OCR)"
     "/Users/jack/Desktop/Testing_the_waters_for_floating_class_7.5M___Philadelphia_Daily_News_PA___February_17_2025__pX10.pdf:Newspaper Article"
 )
 
@@ -50,5 +50,5 @@ echo "=========================================="
 echo ""
 echo "Summary:"
 echo "- Files with gibberish OCR → pdftotext used ✅"
-echo "- Files with good OCR → Ferrules used ✅"
+echo "- Files with good OCR → OAR-OCR used ✅"
 echo "- Intelligent fallback system working ✅"

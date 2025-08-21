@@ -9,7 +9,7 @@ echo "CHONKER8 v8.8.0 - IMPROVED VERSION TEST"
 echo "=========================================="
 echo ""
 
-# Test 1: Basic Ferrules extraction with dynamic grid sizing
+# Test 1: Basic OAR-OCR extraction with dynamic grid sizing
 echo "=== TEST 1: Dynamic Grid Sizing (Prevents Truncation) ==="
 echo "Testing with certificate PDF that has wide content..."
 echo ""

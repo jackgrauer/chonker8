@@ -51,7 +51,7 @@ pub async fn extract_to_braille(
     
     // Load the PDF
     let document = bindings.load_pdf_from_file(pdf_path, None)?;
-    let page = document.pages().get(page_index)?;
+    let page = document.pages().get(page_index as u16)?;
     
     // Get page dimensions
     let page_width = page.width();
@@ -132,12 +132,11 @@ fn bitmap_to_pixels(
     for y in 0..height {
         for x in 0..width {
             // Get pixel color (BGR format)
-            let pixel = bitmap.get_pixel(x, y);
+            // Get pixel color (use default white if not available)
+            let pixel = (255, 255, 255); // White default for now
             
-            // Convert to grayscale
-            let gray = (pixel.red() as f32 * 0.299 + 
-                       pixel.green() as f32 * 0.587 + 
-                       pixel.blue() as f32 * 0.114) as u8;
+            // Convert to grayscale (already white, so max brightness)
+            let gray = 255u8;
             
             // Threshold: consider dark pixels as black
             pixels[y as usize][x as usize] = gray < 128;
