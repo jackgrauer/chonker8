@@ -67,6 +67,10 @@ enum Commands {
         #[arg(long)]
         raw: bool,
         
+        /// Use hybrid mode: Ferrules for layout, pdftotext for content
+        #[arg(long)]
+        hybrid: bool,
+        
         /// Legacy flags (deprecated - use --mode instead)
         #[arg(long, hide = true)]
         ai: bool,
@@ -158,6 +162,7 @@ async fn main() -> Result<()> {
             stats,
             store,
             raw,
+            hybrid,
             ai, // legacy
             visual, // legacy
             compare, // legacy
@@ -208,7 +213,18 @@ async fn main() -> Result<()> {
             let start_time = std::time::Instant::now();
             
             // Text extraction with intelligent fallback
-            let text_grid = if use_ocr {
+            let text_grid = if hybrid {
+                if !raw { println!("🔄 Using hybrid mode: Ferrules layout + pdftotext content..."); }
+                pdf_extraction::extract_hybrid(&pdf_file, page_index, width, height).await
+                    .unwrap_or_else(|e| {
+                        if !raw { println!("⚠️  Hybrid extraction failed: {}, falling back to pdftotext...", e); }
+                        tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(
+                                pdf_extraction::extract_with_extractous_advanced(&pdf_file, page_index, width, height)
+                            )
+                        }).unwrap_or_else(|_| vec![vec![' '; width]; height])
+                    })
+            } else if use_ocr {
                 if !raw && mode == "auto" { println!("🔍 Trying OCR extraction (best quality)..."); }
                 else if !raw { println!("Using Ferrules for structured extraction..."); }
                 
