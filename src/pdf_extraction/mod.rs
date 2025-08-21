@@ -16,3 +16,15 @@ pub mod document_understanding;
 pub mod tokenizer;
 pub mod document_ai_simple;
 // pub use document_ai_simple::{SimpleTrOCR, extract_with_simple_trocr}; // Available but currently unused
+
+// Add OCR engine module
+pub mod ocr_engine;
+
+// UI modules (created by deployment script)
+pub mod document_processor;
+pub mod ui_api;
+
+// Export main components
+pub use ocr_engine::{OCREngine, OCRResult};
+pub use document_processor::{DocumentProcessor, ProcessedDocument, ExtractedText, DocumentSection};
+pub use ui_api::{DocumentAIService, UIRequest, UIResponse, create_service};

@@ -97,3 +97,51 @@ impl TrOCRTokenizer {
         self.eos_token_id
     }
 }
+
+// LayoutLM Tokenizer support
+pub struct LayoutLMTokenizer {
+    tokenizer: Option<Tokenizer>,
+    vocab: HashMap<String, u32>,
+}
+
+impl LayoutLMTokenizer {
+    pub fn new() -> Result<Self> {
+        println!("  📚 Loading LayoutLM tokenizer...");
+        
+        // Try to load LayoutLM vocabulary
+        let vocab_path = Path::new("models/layoutlm_vocab.json");
+        let mut vocab = HashMap::new();
+        
+        if vocab_path.exists() {
+            let vocab_str = std::fs::read_to_string(vocab_path)?;
+            vocab = serde_json::from_str(&vocab_str)?;
+            println!("  ✅ Loaded LayoutLM vocabulary with {} tokens", vocab.len());
+        }
+        
+        // Load tokenizer if available
+        let tokenizer = if Path::new("models/layoutlm_tokenizer.json").exists() {
+            match Tokenizer::from_file("models/layoutlm_tokenizer.json") {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    println!("  ⚠️ Failed to load tokenizer: {:?}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        Ok(Self { tokenizer, vocab })
+    }
+    
+    pub fn tokenize(&self, text: &str) -> Vec<u32> {
+        // Simple tokenization for testing
+        if let Some(ref tokenizer) = self.tokenizer {
+            if let Ok(encoding) = tokenizer.encode(text, false) {
+                return encoding.get_ids().to_vec();
+            }
+        }
+        // Fallback: return dummy tokens
+        vec![101, 102] // [CLS], [SEP]
+    }
+}

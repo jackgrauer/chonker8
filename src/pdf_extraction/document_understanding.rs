@@ -1,3 +1,4 @@
+use tokenizers::tokenizer::Tokenizer;
 // Document Understanding with LayoutLMv3
 use anyhow::Result;
 use std::path::Path;
@@ -70,6 +71,7 @@ pub struct BoundingBox {
 
 pub struct DocumentAnalyzer {
     layoutlm_session: Option<Session>,
+    tokenizer: Option<Tokenizer>,
     initialized: bool,
     has_layoutlm: bool,
 }
@@ -93,14 +95,36 @@ impl DocumentAnalyzer {
                 .commit_from_file(model_path)?;
                 
             println!("  ✅ LayoutLM model loaded successfully");
+            println!("    Inputs: {} (input_ids, bbox, attention_mask, pixel_values)", session.inputs.len());
             (Some(session), true)
         } else {
             println!("  ℹ️ Using heuristic document analysis");
             (None, false)
         };
         
+        // Load tokenizer if model is available
+        let tokenizer = if has_layoutlm {
+            if Path::new("models/layoutlm_tokenizer.json").exists() {
+                match Tokenizer::from_file("models/layoutlm_tokenizer.json") {
+                    Ok(t) => {
+                        println!("  ✅ LayoutLM tokenizer loaded");
+                        Some(t)
+                    },
+                    Err(_) => {
+                        println!("  ⚠️ Could not load tokenizer, using defaults");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         Ok(Self {
             layoutlm_session,
+            tokenizer,
             initialized: true,
             has_layoutlm,
         })
@@ -134,11 +158,15 @@ impl DocumentAnalyzer {
             
             // 2. Convert image to tensor (CHW format, normalized)
             let mut image_tensor = Vec::with_capacity(3 * 224 * 224);
-            for pixel in processed_image.pixels() {
-                // Normalize to ImageNet standards
-                image_tensor.push((pixel[0] as f32 / 255.0 - 0.485) / 0.229); // R
-                image_tensor.push((pixel[1] as f32 / 255.0 - 0.456) / 0.224); // G
-                image_tensor.push((pixel[2] as f32 / 255.0 - 0.406) / 0.225); // B
+            // LayoutLM expects CHW format
+            for channel in 0..3 {
+                for y in 0..224 {
+                    for x in 0..224 {
+                        let pixel = processed_image.get_pixel(x, y);
+                        // Simple normalization to [0, 1]
+                        image_tensor.push(pixel[channel] as f32 / 255.0);
+                    }
+                }
             }
             
             // 3. Simple tokenization (in production, use proper tokenizer)
@@ -156,17 +184,17 @@ impl DocumentAnalyzer {
             let pixel_values = Value::from_array(([1_usize, 3, 224, 224], image_tensor.into_boxed_slice()))?;
             
             let input_ids_tensor = Value::from_array((
-                vec![1_usize, input_ids.len()],
+                [1_usize, input_ids.len()],
                 input_ids.into_boxed_slice()
             ))?;
             
             let attention_mask_tensor = Value::from_array((
-                vec![1_usize, attention_mask.len()],
+                [1_usize, attention_mask.len()],
                 attention_mask.into_boxed_slice()
             ))?;
             
             let bbox_tensor = Value::from_array((
-                vec![1_usize, tokens.len(), 4],
+                [1_usize, tokens.len(), 4],
                 bbox.into_boxed_slice()
             ))?;
             
@@ -175,8 +203,8 @@ impl DocumentAnalyzer {
             let outputs = session.run(inputs![
                 input_ids_tensor,
                 bbox_tensor,
-                pixel_values,
-                attention_mask_tensor
+                attention_mask_tensor,
+                pixel_values
             ])?;
             
             // 7. Process outputs
