@@ -29,6 +29,14 @@ regex = "1.10"
 # Storage - Simple SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# File picker with fuzzy finding
+nucleo = "0.5"
+dirs = "5.0"
+
+# PDF display
+viuer = "0.7"
+image_0_24 = { package = "image", version = "0.24" }
+
 [[bin]]
 name = "chonker8"
 path = "src/main.rs"

@@ -1,9 +1,9 @@
-// Better text extraction using pdftotext (same as Extractous uses internally)
+// PDF text extraction using pdftotext command-line tool
 use anyhow::Result;
 use std::path::Path;
 
 /// Extract text using pdftotext for clean extraction without scrambling  
-pub async fn extract_with_extractous(
+pub async fn extract_with_pdftotext(
     pdf_path: &Path,
     page_index: usize,
     width: usize,
@@ -48,7 +48,7 @@ pub async fn extract_with_extractous(
 }
 
 /// Extract with better page handling
-pub async fn extract_with_extractous_advanced(
+pub async fn extract_with_pdftotext_advanced(
     pdf_path: &Path,
     page_index: usize,
     width: usize,
@@ -70,7 +70,7 @@ pub async fn extract_with_extractous_advanced(
     
     if !output.status.success() {
         // Fallback to full extraction
-        return extract_with_extractous(pdf_path, page_index, width, height).await;
+        return extract_with_pdftotext(pdf_path, page_index, width, height).await;
     }
     
     let text = String::from_utf8_lossy(&output.stdout);

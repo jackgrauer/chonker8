@@ -40,6 +40,7 @@ impl BuildSystem {
                 output: result.unwrap_or_else(|e| format!("Build failed: {}", e)),
                 binary_path: self.get_binary_path(&request.target),
                 build_time,
+                should_restart: false, // Build system doesn't trigger restarts
             };
             
             if self.result_tx.send(build_result).is_err() {

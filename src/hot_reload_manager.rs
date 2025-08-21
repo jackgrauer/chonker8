@@ -7,6 +7,8 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
     thread,
     time::{Duration, Instant},
+    env,
+    os::unix::process::CommandExt,
 };
 
 pub struct HotReloadManager {
@@ -30,6 +32,7 @@ pub struct BuildResult {
     pub output: String,
     pub binary_path: Option<String>,
     pub build_time: Duration,
+    pub should_restart: bool,
 }
 
 impl HotReloadManager {
@@ -95,10 +98,29 @@ impl HotReloadManager {
         if needs_rebuild {
             println!("🔄 Files changed: {:?}", changed_files);
             
-            // Always rebuild pdf-processor for hot-reload
-            let build_request = BuildRequest {
-                target: "pdf-processor".to_string(),
-                features: vec!["default".to_string()],
+            // Check if main app files changed (requires full restart)
+            let main_app_changed = changed_files.iter().any(|path| {
+                let path_str = path.to_string_lossy();
+                path_str.contains("main_hotreload.rs") ||
+                path_str.contains("ui_renderer.rs") ||
+                path_str.contains("integrated_file_picker.rs") ||
+                path_str.contains("file_picker.rs") ||
+                path_str.contains("theme.rs") ||
+                path_str.contains("Cargo.toml")
+            });
+            
+            let build_request = if main_app_changed {
+                println!("🔥 Main app files changed - will restart after rebuild");
+                BuildRequest {
+                    target: "chonker8-hot".to_string(),
+                    features: vec!["default".to_string()],
+                }
+            } else {
+                // Other files - just rebuild pdf-processor
+                BuildRequest {
+                    target: "pdf-processor".to_string(),
+                    features: vec!["default".to_string()],
+                }
             };
             
             self.build_req_tx.send(build_request)?;
@@ -117,20 +139,39 @@ impl HotReloadManager {
         while let Ok(request) = build_req_rx.recv() {
             let start_time = Instant::now();
             
+            println!("🔨 Building {}...", request.target);
+            
             // Simple build execution
             let success = Command::new("cargo")
                 .env("DYLD_LIBRARY_PATH", "./lib")
-                .args(&["build", "--release", "--bin", &request.target])
+                .args(&["build", "--release", "--bin", &request.target, "--quiet"])
                 .status()
                 .map(|status| status.success())
                 .unwrap_or(false);
             
+            let should_restart = request.target == "chonker8-hot";
+            
             let result = BuildResult {
                 success,
-                output: if success { "Build successful".to_string() } else { "Build failed".to_string() },
+                output: if success { 
+                    if should_restart {
+                        "Build successful - restarting app".to_string()
+                    } else {
+                        "Build successful".to_string()
+                    }
+                } else { 
+                    "Build failed".to_string() 
+                },
                 binary_path: if success { Some(format!("target/release/{}", request.target)) } else { None },
                 build_time: start_time.elapsed(),
+                should_restart,
             };
+            
+            if success {
+                println!("✅ Build completed in {:?}", result.build_time);
+            } else {
+                println!("❌ Build failed for {}", request.target);
+            }
             
             if build_result_tx.send(result).is_err() {
                 break; // Main thread disconnected
@@ -145,6 +186,30 @@ impl HotReloadManager {
         };
         self.build_req_tx.send(request)?;
         Ok(())
+    }
+    
+    pub fn restart_app() -> ! {
+        println!("🔄 Hot-reloading app...");
+        
+        // Get current args
+        let args: Vec<String> = env::args().collect();
+        let binary_path = &args[0];
+        
+        // Re-exec with same args
+        let mut cmd = Command::new("./target/release/chonker8-hot");
+        cmd.env("DYLD_LIBRARY_PATH", "./lib");
+        
+        // Add original args (skip first arg which is the binary name)
+        if args.len() > 1 {
+            cmd.args(&args[1..]);
+        }
+        
+        // Replace current process
+        let err = cmd.exec();
+        
+        // If exec fails, exit with error
+        eprintln!("Failed to restart app: {}", err);
+        std::process::exit(1);
     }
 }
 

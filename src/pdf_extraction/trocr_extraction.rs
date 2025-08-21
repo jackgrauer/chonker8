@@ -1,4 +1,4 @@
-// Simplified TrOCR implementation for chonker8
+// TrOCR (Transformer-based OCR) implementation for chonker8
 use anyhow::{Result, Context};
 use std::path::Path;
 use image::imageops::FilterType;

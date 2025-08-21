@@ -1,5 +1,5 @@
 use tokenizers::tokenizer::Tokenizer;
-// Document Understanding with LayoutLMv3
+// LayoutLMv3 document understanding and structured extraction
 use anyhow::Result;
 use std::path::Path;
 use std::collections::HashMap;

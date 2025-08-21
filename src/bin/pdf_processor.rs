@@ -5,6 +5,7 @@ use std::{
     path::Path,
     io::{self, BufRead},
 };
+use chonker8::file_picker;
 
 // This binary can be hot-reloaded independently of the main TUI
 fn main() -> Result<()> {
@@ -17,6 +18,7 @@ fn main() -> Result<()> {
         eprintln!("  count <pdf_path> - Get page count");
         eprintln!("  version - Get processor version");
         eprintln!("  interactive - Interactive mode");
+        eprintln!("  filepicker - Launch hot-reload file picker");
         return Ok(());
     }
     
@@ -46,6 +48,9 @@ fn main() -> Result<()> {
         },
         "interactive" => {
             run_interactive_mode()?;
+        },
+        "filepicker" => {
+            launch_file_picker()?;
         },
         _ => {
             eprintln!("Unknown command: {}", args[1]);
@@ -95,6 +100,8 @@ fn process_page(pdf_path: &Path, page: usize) -> Result<Vec<Vec<char>>> {
         "║                                      ║",
         "║  Edit src/bin/pdf_processor.rs       ║",
         "║  and see changes instantly!          ║",
+        "║                                      ║",
+        "║  🔥 Press Ctrl+F for file picker!    ║",
         "║                                      ║",
         "╚══════════════════════════════════════╝",
     ];
@@ -169,6 +176,29 @@ fn run_interactive_mode() -> Result<()> {
         }
         
         println!("\n> ");
+    }
+    
+    Ok(())
+}
+
+fn launch_file_picker() -> Result<()> {
+    println!("🚀 Launching Hot-Reload File Picker...");
+    
+    match file_picker::pick_pdf_file() {
+        Ok(Some(path)) => {
+            println!("✅ Selected: {}", path.display());
+            
+            // Show a preview of the selected file
+            println!("\n🔍 Processing selected file...");
+            let grid = process_page(&path, 1)?;
+            print_grid(&grid);
+        },
+        Ok(None) => {
+            println!("❌ No file selected or cancelled");
+        },
+        Err(e) => {
+            eprintln!("💥 File picker error: {}", e);
+        }
     }
     
     Ok(())

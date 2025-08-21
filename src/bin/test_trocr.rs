@@ -1,9 +1,9 @@
 use anyhow::Result;
 
 // Import from the crate's module structure
-#[path = "../pdf_extraction/document_ai_simple.rs"]
-mod document_ai_simple;
-use document_ai_simple::SimpleTrOCR;
+#[path = "../pdf_extraction/trocr_extraction.rs"]
+mod trocr_extraction;
+use trocr_extraction::SimpleTrOCR;
 
 #[tokio::main]
 async fn main() -> Result<()> {

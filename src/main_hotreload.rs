@@ -16,14 +16,15 @@ use crossterm::{
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     io::{stdout, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::mpsc::{channel, Receiver},
     time::Duration,
 };
 use ui_config::UIConfig;
-use ui_renderer::UIRenderer;
+use ui_renderer::{UIRenderer, Screen};
 use hot_reload_manager::HotReloadManager;
 use std::process::{Command, Stdio};
+// use chonker8::integrated_file_picker::IntegratedFilePicker; // Unused import
 
 struct App {
     config: UIConfig,
@@ -68,31 +69,18 @@ impl App {
         println!("Loading PDF: {}", path);
         self.pdf_path = Some(path.to_string());
         
-        // Try to extract text using our PDF extraction
-        let pdf_path = Path::new(path);
+        // Use the new UIRenderer PDF loading
+        let pdf_path = PathBuf::from(path);
         if pdf_path.exists() {
-            // For now, use a simple extraction
-            let _page_count = pdf_extraction::basic::get_page_count(pdf_path)?;
-            
-            // Create a simple runtime for the async call
+            // Create a runtime for the async call
             let rt = tokio::runtime::Runtime::new()?;
             
-            // Try to render the first page
-            match rt.block_on(pdf_extraction::true_visual::render_true_visual(pdf_path, 0, 80, 24)) {
-                Ok(grid) => {
-                    self.renderer.set_pdf_content(grid);
+            match rt.block_on(self.renderer.load_pdf(pdf_path)) {
+                Ok(()) => {
+                    println!("PDF loaded successfully: {}", path);
                 }
                 Err(e) => {
-                    eprintln!("Failed to render PDF: {}", e);
-                    // Set some default content
-                    let mut default_content = vec![vec![' '; 80]; 24];
-                    let msg = format!("Error loading PDF: {}", e);
-                    for (i, ch) in msg.chars().enumerate() {
-                        if i < 80 {
-                            default_content[0][i] = ch;
-                        }
-                    }
-                    self.renderer.set_pdf_content(default_content);
+                    eprintln!("Failed to load PDF: {}", e);
                 }
             }
         }
@@ -133,29 +121,40 @@ impl App {
             // Check for Rust code changes (automatic hot-reload)
             if let Ok(Some(build_result)) = self.hot_reload_manager.check_for_changes() {
                 if build_result.success {
-                    // Automatically update content with new processor
-                    if let Some(pdf_path) = &self.pdf_path.clone() {
-                        self.reload_pdf_content(pdf_path)?;
+                    if build_result.should_restart {
+                        // Main app needs restart - clean up terminal first
+                        execute!(stdout(), Show, LeaveAlternateScreen)?;
+                        terminal::disable_raw_mode()?;
+                        
+                        println!("🔄 Main app rebuilt - hot-reloading...");
+                        std::thread::sleep(Duration::from_millis(100)); // Brief pause
+                        
+                        // Restart the application
+                        HotReloadManager::restart_app();
                     } else {
-                        // Update demo content with new processor
-                        self.update_demo_content()?;
+                        // Just external processor reload
+                        if let Some(pdf_path) = &self.pdf_path.clone() {
+                            self.reload_pdf_content(pdf_path)?;
+                        } else {
+                            self.update_demo_content()?;
+                        }
+                        
+                        // Show brief success message
+                        execute!(
+                            stdout(),
+                            crossterm::cursor::MoveTo(0, 1),
+                            crossterm::style::Print(&format!("🔥 Auto-reloaded! ({:?})", build_result.build_time))
+                        )?;
+                        self.needs_redraw = true;
+                        
+                        // Clear the message after a moment
+                        std::thread::sleep(Duration::from_millis(500));
+                        execute!(
+                            stdout(),
+                            crossterm::cursor::MoveTo(0, 1),
+                            crossterm::style::Print(" ".repeat(50))
+                        )?;
                     }
-                    
-                    // Show brief success message
-                    execute!(
-                        stdout(),
-                        crossterm::cursor::MoveTo(0, 1),
-                        crossterm::style::Print(&format!("🔥 Auto-reloaded! ({:?})", build_result.build_time))
-                    )?;
-                    self.needs_redraw = true;
-                    
-                    // Clear the message after a moment
-                    std::thread::sleep(Duration::from_millis(500));
-                    execute!(
-                        stdout(),
-                        crossterm::cursor::MoveTo(0, 1),
-                        crossterm::style::Print(" ".repeat(50))
-                    )?;
                 } else {
                     execute!(
                         stdout(),
@@ -167,6 +166,8 @@ impl App {
             
             // Render if needed
             if self.needs_redraw {
+                // Pass the file picker reference to the renderer for file picker screen
+                // The renderer now has its own integrated file picker
                 self.renderer.render()?;
                 self.needs_redraw = false;
             }
@@ -201,54 +202,42 @@ impl App {
     }
     
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Char(c) => {
-                // Check against configurable hotkeys
-                let c_str = c.to_string();
-                
-                if c_str == self.config.hotkeys.quit {
+        // Check if we're on the file picker screen and handle file picker input
+        if *self.renderer.current_screen() == Screen::FilePicker {
+            // Try to handle file picker input
+            if let Some(selected_file) = self.renderer.handle_file_picker_input(key)? {
+                // Load the selected PDF and switch to PDF viewer
+                if let Err(e) = self.load_pdf(&selected_file) {
+                    eprintln!("Failed to load PDF: {}", e);
+                }
+                self.renderer.set_screen(Screen::PdfViewer);
+                self.needs_redraw = true;
+                return Ok(());
+            }
+            
+            // Check for navigation keys even on file picker screen
+            match key.code {
+                KeyCode::Tab => {
+                    self.renderer.next_screen();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::Esc => {
                     self.running = false;
-                } else if c_str == self.config.hotkeys.next_page {
-                    self.renderer.next_page();
+                    return Ok(());
+                }
+                _ => {
+                    // File picker handled the input, need redraw
                     self.needs_redraw = true;
-                } else if c_str == self.config.hotkeys.prev_page {
-                    self.renderer.prev_page();
-                    self.needs_redraw = true;
-                } else if c_str == self.config.hotkeys.toggle_wrap {
-                    self.renderer.toggle_wrap();
-                    self.needs_redraw = true;
-                } else if c_str == self.config.hotkeys.toggle_mode {
-                    self.renderer.toggle_mode();
-                    self.needs_redraw = true;
-                } else if c_str == self.config.hotkeys.reload_config {
-                    // Manual reload
-                    if let Ok(new_config) = UIConfig::load() {
-                        self.config = new_config.clone();
-                        self.renderer.update_config(new_config);
-                        self.needs_redraw = true;
-                    }
-                } else if c_str == "R" {
-                    // Manual PDF processor reload (uppercase R)
-                    if let Ok(()) = self.update_demo_content() {
-                        self.needs_redraw = true;
-                        execute!(
-                            stdout(),
-                            crossterm::cursor::MoveTo(0, 1),
-                            crossterm::style::Print("🔥 PDF Processor manually reloaded!")
-                        )?;
-                    }
+                    return Ok(());
                 }
             }
-            KeyCode::Up => {
-                self.renderer.scroll_up();
-                self.needs_redraw = true;
-            }
-            KeyCode::Down => {
-                self.renderer.scroll_down();
-                self.needs_redraw = true;
-            }
+        }
+        
+        // Handle global navigation keys
+        match key.code {
             KeyCode::Tab => {
-                self.renderer.next_page();
+                self.renderer.next_screen();
                 self.needs_redraw = true;
             }
             KeyCode::Esc => {
@@ -333,6 +322,8 @@ impl App {
         }
         content
     }
+    
+    // Removed old file picker launch methods - file picker is now integrated as a screen
 }
 
 fn main() -> Result<()> {
@@ -357,21 +348,20 @@ fn main() -> Result<()> {
             "║  Chonker8.1 Hot-Reload TUI Demo     ║",
             "╠══════════════════════════════════════╣",
             "║                                      ║",
-            "║  Edit ui.toml to see live changes!  ║",
+            "║  Three-screen hot-reload TUI         ║",
             "║                                      ║",
-            "║  Hotkeys:                            ║",
-            "║    q - quit                          ║",
-            "║    Tab - next page                   ║",
-            "║    n - next page                     ║",
-            "║    p - previous page                 ║",
-            "║    m - toggle mode                   ║",
-            "║    w - toggle wrap                   ║",
-            "║    r - reload config                 ║",
+            "║  🎮 Controls:                        ║",
+            "║    Tab - Cycle screens               ║",
+            "║    Esc - Exit                        ║",
             "║                                      ║",
-            "║  Try changing:                       ║",
-            "║    - mode = \"full\"                   ║",
-            "║    - highlight = \"green\"             ║",
-            "║    - border = \"sharp\"                ║",
+            "║  🖥️  Available screens:               ║",
+            "║    1. Demo (current)                 ║",
+            "║    2. File Picker                    ║",
+            "║    3. PDF Viewer                     ║",
+            "║                                      ║",
+            "║  Ready for chonker7 UI integration! ║",
+            "║                                      ║",
+            "║  ▶️ Press Tab to continue             ║",
             "║                                      ║",
             "╚══════════════════════════════════════╝",
         ];

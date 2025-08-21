@@ -4,10 +4,21 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor, Attribute, SetAttribute},
     terminal::{self, Clear, ClearType},
 };
 use std::io::{self, stdout, Write};
+use std::path::PathBuf;
+use image::DynamicImage;
+use chonker8::integrated_file_picker::IntegratedFilePicker;
+use chonker8::{pdf_renderer, viuer_display, content_extractor, ascii_display};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Screen {
+    Demo,
+    FilePicker,
+    PdfViewer,
+}
 
 pub struct UIRenderer {
     config: UIConfig,
@@ -17,10 +28,25 @@ pub struct UIRenderer {
     scroll_offset: usize,
     cursor_x: usize,
     cursor_y: usize,
+    current_screen: Screen,
+    available_screens: Vec<Screen>,
+    file_picker: Option<IntegratedFilePicker>,
+    current_pdf_path: Option<PathBuf>,
+    current_pdf_image: Option<DynamicImage>,
+    dark_mode: bool,
 }
 
 impl UIRenderer {
     pub fn new(config: UIConfig) -> Self {
+        // Initialize the file picker
+        let file_picker = match IntegratedFilePicker::new() {
+            Ok(picker) => Some(picker),
+            Err(e) => {
+                eprintln!("Warning: Failed to initialize file picker: {}", e);
+                None
+            }
+        };
+        
         Self {
             config,
             pdf_content: vec![vec![' '; 80]; 24], // Default empty content
@@ -29,6 +55,12 @@ impl UIRenderer {
             scroll_offset: 0,
             cursor_x: 0,
             cursor_y: 0,
+            current_screen: Screen::Demo,
+            available_screens: vec![Screen::Demo, Screen::FilePicker, Screen::PdfViewer],
+            file_picker,
+            current_pdf_path: None,
+            current_pdf_image: None,
+            dark_mode: false,
         }
     }
     
@@ -44,7 +76,23 @@ impl UIRenderer {
         self.total_pages = total;
     }
     
-    pub fn render(&self) -> Result<()> {
+    pub fn render(&mut self) -> Result<()> {
+        match self.current_screen {
+            Screen::Demo => self.render_demo_screen(),
+            Screen::FilePicker => self.render_file_picker_screen(),
+            Screen::PdfViewer => self.render_pdf_screen(),
+        }
+    }
+    
+    pub fn render_with_file_picker(&self, file_picker: &mut IntegratedFilePicker) -> Result<()> {
+        match self.current_screen {
+            Screen::Demo => self.render_demo_screen(),
+            Screen::FilePicker => self.render_integrated_file_picker_screen(file_picker),
+            Screen::PdfViewer => self.render_pdf_screen(),
+        }
+    }
+    
+    fn render_demo_screen(&self) -> Result<()> {
         // Get terminal size first
         let (width, height) = terminal::size()?;
         
@@ -78,6 +126,137 @@ impl UIRenderer {
         
         // Reset colors and ensure everything is flushed
         execute!(stdout(), ResetColor)?;
+        stdout().flush()?;
+        Ok(())
+    }
+    
+    fn render_file_picker_screen(&mut self) -> Result<()> {
+        // Use the integrated file picker if available
+        let (width, height) = terminal::size()?;
+        
+        if let Some(file_picker) = &mut self.file_picker {
+            // Render the actual integrated file picker
+            file_picker.render(width, height)?;
+        } else {
+            // Fallback when file picker is not available
+            execute!(
+                stdout(),
+                Clear(ClearType::All),
+                MoveTo(0, 0),
+                SetForegroundColor(crossterm::style::Color::Yellow),
+                Print("⚠️ File picker not available - using fallback"),
+                ResetColor,
+                MoveTo(0, 2),
+                Print("Tab: Next Screen • Esc: Exit")
+            )?;
+            stdout().flush()?;
+        }
+        
+        Ok(())
+    }
+    
+    fn render_integrated_file_picker_screen(&self, file_picker: &mut IntegratedFilePicker) -> Result<()> {
+        let (width, height) = terminal::size()?;
+        file_picker.render(width, height)?;
+        Ok(())
+    }
+    
+    fn render_pdf_screen(&self) -> Result<()> {
+        // Chonker7-style split view: PDF image on left, text extraction on right
+        let (width, height) = terminal::size()?;
+        let split_x = width / 2;
+        
+        execute!(
+            stdout(),
+            Clear(ClearType::All),
+            MoveTo(0, 0),
+            Hide
+        )?;
+        
+        // Render PDF image on left side if available
+        if let Some(image) = &self.current_pdf_image {
+            // Show PDF debug info in TUI
+            execute!(
+                stdout(),
+                MoveTo(2, 2),
+                SetForegroundColor(Color::Green),
+                Print(&format!("PDF: {} pages | Image: {}x{}", 
+                    self.total_pages, image.width(), image.height())),
+                ResetColor
+            )?;
+            
+            // Try to display the PDF image
+            match viuer_display::display_pdf_image(
+                image, 0, 4, split_x - 1, height - 6, self.dark_mode
+            ) {
+                Ok(_) => {
+                    // Image displayed successfully
+                }
+                Err(_) => {
+                    // Fall back to ASCII display
+                    match ascii_display::display_pdf_as_ascii(
+                        image, 2, 6, split_x - 4, height - 10
+                    ) {
+                        Ok(_) => {
+                            execute!(
+                                stdout(),
+                                MoveTo(2, height - 4),
+                                SetForegroundColor(Color::Yellow),
+                                Print("ASCII mode (viuer failed)"),
+                                ResetColor
+                            )?;
+                        }
+                        Err(e) => {
+                            execute!(
+                                stdout(),
+                                MoveTo(2, 6),
+                                SetForegroundColor(Color::Red),
+                                Print(&format!("Display error: {}", e)),
+                                ResetColor
+                            )?;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Show placeholder if no PDF loaded
+            execute!(
+                stdout(),
+                MoveTo(2, 4),
+                SetForegroundColor(Color::Yellow),
+                Print("📄 PDF - TEST Screen"),
+                MoveTo(2, 6),
+                SetForegroundColor(Color::White),
+                Print("No PDF loaded. Use file picker to select a PDF."),
+                MoveTo(2, 8),
+                SetForegroundColor(Color::Cyan),
+                Print("Press Tab to go to File Picker"),
+                ResetColor
+            )?;
+        }
+        
+        // Render text extraction on right side
+        self.render_text_extraction_panel(split_x, 0, width - split_x, height - 2)?;
+        
+        // Status bar
+        let status_text = if let Some(path) = &self.current_pdf_path {
+            format!("PDF: {} | Page: {}/{} | Tab: Cycle • Esc: Exit", 
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                self.current_page, 
+                self.total_pages)
+        } else {
+            "PDF - TEST Screen | Tab: Cycle • Esc: Exit".to_string()
+        };
+        
+        execute!(
+            stdout(),
+            MoveTo(0, height - 1),
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
+            Print(format!(" {:<width$} ", status_text, width = width as usize - 2)),
+            ResetColor
+        )?;
+        
         stdout().flush()?;
         Ok(())
     }
@@ -287,46 +466,8 @@ impl UIRenderer {
     }
     
     fn get_page_content(&self) -> Vec<Vec<char>> {
-        match self.current_page {
-            1 => self.pdf_content.clone(),
-            2 => {
-                // Create page 2 content
-                let mut content = vec![vec![' '; 80]; 24];
-                let lines = vec![
-                    "╔══════════════════════════════════════╗",
-                    "║  Chonker8.1 - Page 2 Demo           ║",
-                    "╠══════════════════════════════════════╣",
-                    "║                                      ║",
-                    "║  This is page 2! Hot-reload works!  ║",
-                    "║                                      ║",
-                    "║  Features:                           ║",
-                    "║    ✓ Multi-page navigation           ║",
-                    "║    ✓ Live config reloading           ║",
-                    "║    ✓ Crossterm TUI                   ║",
-                    "║    ✓ Tab key navigation              ║",
-                    "║                                      ║",
-                    "║  Configuration files:                ║",
-                    "║    - ui.toml (hot-reloadable)        ║",
-                    "║    - Cargo.toml (build config)       ║",
-                    "║                                      ║",
-                    "║  Press Tab again to go back to P1!  ║",
-                    "║                                      ║",
-                    "║  Or use 'n' and 'p' for nav         ║",
-                    "║                                      ║",
-                    "╚══════════════════════════════════════╝",
-                ];
-                
-                for (i, line) in lines.iter().enumerate() {
-                    for (j, ch) in line.chars().enumerate() {
-                        if j < 80 {
-                            content[i][j] = ch;
-                        }
-                    }
-                }
-                content
-            },
-            _ => self.pdf_content.clone(),
-        }
+        // Always use the main PDF content - no more page 2 demo
+        self.pdf_content.clone()
     }
     
     fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
@@ -377,8 +518,9 @@ impl UIRenderer {
             crossterm::style::SetAttribute(crossterm::style::Attribute::NoReverse)
         )?;
         
-        // Left side: mode and file info
-        let left_status = format!(" [{}] Page {}/{} ", 
+        // Left side: screen and mode info
+        let left_status = format!(" [{}] {} Page {}/{} ", 
+            self.get_screen_name(),
             self.config.mode.to_uppercase(),
             self.current_page,
             self.total_pages
@@ -438,5 +580,136 @@ impl UIRenderer {
     
     pub fn toggle_wrap(&mut self) {
         self.config.panels.text.wrap_text = !self.config.panels.text.wrap_text;
+    }
+    
+    pub fn next_screen(&mut self) {
+        let current_index = self.available_screens.iter()
+            .position(|s| s == &self.current_screen)
+            .unwrap_or(0);
+        let next_index = (current_index + 1) % self.available_screens.len();
+        self.current_screen = self.available_screens[next_index].clone();
+    }
+    
+    pub fn prev_screen(&mut self) {
+        let current_index = self.available_screens.iter()
+            .position(|s| s == &self.current_screen)
+            .unwrap_or(0);
+        let prev_index = if current_index == 0 {
+            self.available_screens.len() - 1
+        } else {
+            current_index - 1
+        };
+        self.current_screen = self.available_screens[prev_index].clone();
+    }
+    
+    pub fn get_current_screen(&self) -> &Screen {
+        &self.current_screen
+    }
+    
+    pub fn current_screen(&self) -> &Screen {
+        &self.current_screen
+    }
+    
+    pub fn set_screen(&mut self, screen: Screen) {
+        self.current_screen = screen;
+    }
+    
+    pub fn handle_file_picker_input(&mut self, key: crossterm::event::KeyEvent) -> Result<Option<String>> {
+        if let Some(file_picker) = &mut self.file_picker {
+            match key.code {
+                crossterm::event::KeyCode::Char(c) => {
+                    file_picker.handle_char(c)?;
+                }
+                crossterm::event::KeyCode::Backspace => {
+                    file_picker.handle_backspace()?;
+                }
+                crossterm::event::KeyCode::Up => {
+                    file_picker.handle_up()?;
+                }
+                crossterm::event::KeyCode::Down => {
+                    file_picker.handle_down()?;
+                }
+                crossterm::event::KeyCode::Enter => {
+                    if let Some(selected_file) = file_picker.get_selected_file() {
+                        return Ok(Some(selected_file.to_string_lossy().to_string()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(None)
+    }
+    
+    pub fn get_screen_name(&self) -> &str {
+        match self.current_screen {
+            Screen::Demo => "Demo",
+            Screen::FilePicker => "File Picker", 
+            Screen::PdfViewer => "PDF Viewer",
+        }
+    }
+    
+    pub async fn load_pdf(&mut self, pdf_path: PathBuf) -> Result<()> {
+        // Load PDF page count
+        self.total_pages = content_extractor::get_page_count(&pdf_path)?;
+        self.current_page = 1;
+        
+        // Render first page image with larger dimensions for better visibility
+        let image = pdf_renderer::render_pdf_page(&pdf_path, 0, 1200, 1600)?;
+        
+        // Extract text to grid
+        let text_matrix = content_extractor::extract_to_matrix(&pdf_path, 0, 200, 100).await?;
+        
+        // Update state
+        self.current_pdf_path = Some(pdf_path);
+        self.current_pdf_image = Some(image);
+        self.pdf_content = text_matrix;
+        
+        Ok(())
+    }
+    
+    pub fn get_current_pdf_path(&self) -> Option<&PathBuf> {
+        self.current_pdf_path.as_ref()
+    }
+    
+    fn render_text_extraction_panel(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+        // Draw border
+        execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
+        for row in 0..height {
+            execute!(stdout(), MoveTo(x, y + row), Print("│"))?; // Left border
+        }
+        
+        // Title
+        execute!(
+            stdout(),
+            MoveTo(x + 2, y + 1),
+            SetForegroundColor(Color::Green),
+            Print("Text Extraction"),
+            ResetColor
+        )?;
+        
+        // Render extracted text content
+        let content_start_y = y + 3;
+        let content_height = height.saturating_sub(4);
+        let content_width = width.saturating_sub(4);
+        
+        for (row_idx, row) in self.pdf_content.iter().enumerate().take(content_height as usize) {
+            let display_y = content_start_y + row_idx as u16;
+            if display_y >= y + height {
+                break;
+            }
+            
+            execute!(stdout(), MoveTo(x + 2, display_y))?;
+            
+            // Convert chars to string for display
+            let line: String = row.iter().take(content_width as usize).collect();
+            execute!(
+                stdout(),
+                SetForegroundColor(Color::White),
+                Print(&line),
+                ResetColor
+            )?;
+        }
+        
+        Ok(())
     }
 }

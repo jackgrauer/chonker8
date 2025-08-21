@@ -1,9 +1,9 @@
 use anyhow::Result;
 use std::path::Path;
 
-#[path = "../pdf_extraction/document_understanding.rs"]
-mod document_understanding;
-use document_understanding::{DocumentAnalyzer, DocumentType};
+#[path = "../pdf_extraction/layoutlm_extraction.rs"]
+mod layoutlm_extraction;
+use layoutlm_extraction::{DocumentAnalyzer, DocumentType};
 
 #[tokio::main]
 async fn main() -> Result<()> {
