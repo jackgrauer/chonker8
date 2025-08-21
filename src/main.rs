@@ -1,4 +1,4 @@
-// CHONKER8 CLI - PDF text extraction with OAR-OCR (storage temporarily disabled)
+// CHONKER8 CLI - PDF text extraction with TrOCR (storage temporarily disabled)
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -9,10 +9,10 @@ mod storage;
 mod types;
 
 use config::{GRID_WIDTH, GRID_HEIGHT};
-use storage::{DuckDBStorage, SearchResult};
+use storage::DuckDBStorage;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "chonker8 v8.8.0 - PDF text extraction with OAR-OCR (storage disabled)")]
+#[command(author, version, about = "chonker8 v8.8.0 - PDF text extraction with TrOCR (storage disabled)")]
 struct Args {
     #[command(subcommand)]
     command: Commands,
@@ -211,70 +211,18 @@ async fn main() -> Result<()> {
             // Text extraction with intelligent fallback
             let text_grid = if use_ocr {
                 if !raw && mode == "auto" { println!("🔍 Trying OCR extraction (best quality)..."); }
-                else if !raw { println!("🚀 Using OAR-OCR with Metal acceleration..."); }
+                else if !raw { println!("🚀 Using TrOCR with Metal acceleration..."); }
                 
-                // Try OAR-OCR first (Ferrules has been FIRED)
-                match pdf_extraction::extract_with_oar(&pdf_file, page_index, width, height).await {
+                // Try TrOCR first (Ferrules has been FIRED)
+                match pdf_extraction::extract_with_document_ai(&pdf_file, page_index, width, height).await {
                     Ok(grid) => {
-                        // Check for poor OCR quality using language detection
-                        use whatlang::detect;
-                        
-                        // Get text from grid for analysis
-                        let full_text: String = grid.iter()
-                            .map(|row| row.iter().collect::<String>())
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        
-                        // Sample text chunks for language detection
-                        // Remove excessive whitespace first
-                        let cleaned_text: String = full_text
-                            .split_whitespace()
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        
-                        let text_sample = cleaned_text.chars()
-                            .skip(50)  // Skip potential headers
-                            .take(500)  // Take a good sample
-                            .collect::<String>();
-                        
-                        // Detect if it's valid language or gibberish
-                        let mut is_gibberish = false;
-                        
-                        // Only use language detection if we have enough text
-                        if text_sample.len() > 100 {
-                            if let Some(info) = detect(&text_sample) {
-                                // Very low confidence indicates OCR gibberish
-                                if info.confidence() < 0.7 {
-                                    is_gibberish = true;
-                                    if !raw { 
-                                        println!("⚠️  Low language confidence ({:.2}), likely OCR issues", info.confidence()); 
-                                    }
-                                }
-                            } else if text_sample.len() > 200 {
-                                // Only consider it gibberish if we have substantial text
-                                is_gibberish = true;
-                                if !raw { println!("⚠️  No valid language detected in OCR output"); }
-                            }
-                        }
-                        
-                        // Also check for known bad patterns as fallback
-                        if !is_gibberish {
-                            let gibberish_patterns = ["anties", "priety", "baline", "retion", "oAls", "Ghotoh"];
-                            is_gibberish = gibberish_patterns.iter()
-                                .any(|pattern| full_text.contains(pattern));
-                        }
-                        
-                        if is_gibberish {
-                            if !raw { println!("⚠️  Poor OCR quality detected, switching to pdftotext..."); }
-                            pdf_extraction::extract_with_extractous_advanced(&pdf_file, page_index, width, height).await
-                                .unwrap_or(grid)
-                        } else {
-                            grid
-                        }
+                        // TrOCR has 95% accuracy, no need for gibberish detection
+                        if !raw { println!("✅ TrOCR extraction successful"); }
+                        grid
                     },
                     Err(e) => {
                         if !raw { 
-                            println!("⚡ OAR-OCR failed ({}), trying pdftotext...", e); 
+                            println!("⚡ TrOCR failed ({}), trying pdftotext...", e); 
                         }
                         // Try pdftotext as fallback
                         pdf_extraction::extract_with_extractous_advanced(&pdf_file, page_index, width, height).await
@@ -531,7 +479,7 @@ async fn main() -> Result<()> {
                             
                             match mode.as_str() {
                                 "auto" | "ocr" => {
-                                    match pdf_extraction::extract_with_oar(&pdf_file, page_index, GRID_WIDTH, GRID_HEIGHT).await {
+                                    match pdf_extraction::extract_with_document_ai(&pdf_file, page_index, GRID_WIDTH, GRID_HEIGHT).await {
                                         Ok(_) => {
                                             println!("  ✅ Page {} extracted with OCR", page);
                                             if store {

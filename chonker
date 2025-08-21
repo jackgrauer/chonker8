@@ -1,0 +1,5 @@
+#!/bin/bash
+# Quick wrapper to run chonker8 from anywhere
+
+CHONKER_HOME="/Users/jack/chonker8"
+DYLD_LIBRARY_PATH="$CHONKER_HOME/lib" "$CHONKER_HOME/target/release/chonker8" "$@"

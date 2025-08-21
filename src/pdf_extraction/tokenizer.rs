@@ -1,0 +1,99 @@
+// TrOCR Tokenizer Module
+use anyhow::Result;
+use tokenizers::tokenizer::Tokenizer;
+use std::path::Path;
+use std::collections::HashMap;
+use serde_json;
+
+pub struct TrOCRTokenizer {
+    tokenizer: Option<Tokenizer>,
+    vocab: HashMap<String, u32>,
+    id_to_token: HashMap<u32, String>,
+    bos_token_id: u32,
+    eos_token_id: u32,
+    pad_token_id: u32,
+}
+
+impl TrOCRTokenizer {
+    pub fn new() -> Result<Self> {
+        println!("  📚 Loading TrOCR tokenizer...");
+        
+        // Load vocabulary
+        let vocab_path = Path::new("models/vocab.json");
+        let mut vocab: HashMap<String, u32> = HashMap::new();
+        let mut id_to_token: HashMap<u32, String> = HashMap::new();
+        
+        if vocab_path.exists() {
+            let vocab_str = std::fs::read_to_string(vocab_path)?;
+            vocab = serde_json::from_str(&vocab_str)?;
+            
+            // Create reverse mapping
+            for (token, id) in &vocab {
+                id_to_token.insert(*id, token.clone());
+            }
+            
+            println!("  ✅ Loaded vocabulary with {} tokens", vocab.len());
+        } else {
+            println!("  ⚠️ Vocabulary file not found, using minimal vocab");
+            // Minimal vocabulary for testing
+            vocab.insert("<s>".to_string(), 0);
+            vocab.insert("</s>".to_string(), 2);
+            vocab.insert("<pad>".to_string(), 1);
+            id_to_token.insert(0, "<s>".to_string());
+            id_to_token.insert(2, "</s>".to_string());
+            id_to_token.insert(1, "<pad>".to_string());
+        }
+        
+        // Try to load full tokenizer if available
+        let tokenizer = if Path::new("models/tokenizer.json").exists() {
+            match Tokenizer::from_file("models/tokenizer.json") {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    println!("  ⚠️ Failed to load tokenizer file: {:?}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        
+        Ok(Self {
+            tokenizer,
+            vocab,
+            id_to_token,
+            bos_token_id: 0,
+            eos_token_id: 2,
+            pad_token_id: 1,
+        })
+    }
+    
+    pub fn decode_ids(&self, token_ids: &[u32]) -> String {
+        let mut text = String::new();
+        
+        for &id in token_ids {
+            if id == self.eos_token_id {
+                break;
+            }
+            
+            if let Some(token) = self.id_to_token.get(&id) {
+                // Handle special tokens
+                if !token.starts_with('<') || !token.ends_with('>') {
+                    // GPT2-style byte-level BPE decoding
+                    let decoded = token.replace("Ġ", " ");
+                    text.push_str(&decoded);
+                }
+            }
+        }
+        
+        // Clean up the text
+        text.trim().to_string()
+    }
+    
+    pub fn get_decoder_start_ids(&self) -> Vec<i64> {
+        vec![self.bos_token_id as i64]
+    }
+    
+    pub fn get_eos_token_id(&self) -> u32 {
+        self.eos_token_id
+    }
+}

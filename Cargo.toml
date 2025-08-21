@@ -11,13 +11,15 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.38", features = ["rt-multi-thread", "macros"] }
 thiserror = "1.0"
-whatlang = "0.16"
 
 # PDF extraction - JUST THE ESSENTIALS
-oar-ocr = "0.1"
+tokenizers = { version = "0.19", features = ["onig"] }
 ort = { version = "2.0.0-rc.10", features = ["coreml"] }
+ndarray = "0.15"
 image = "0.25"
 pdfium-render = { version = "0.8", features = ["thread_safe"] }
+tempfile = "3.8"
+regex = "1.10"
 
 # Storage - Simple SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }

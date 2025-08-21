@@ -11,9 +11,9 @@ pub async fn render_true_visual(
     term_height: usize,
 ) -> Result<Vec<Vec<char>>> {
     // Initialize PDFium
-    let lib_path = crate::config::pdfium_library_path();
     let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&lib_path))?
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
+            .or_else(|_| Pdfium::bind_to_system_library())?
     );
     
     // Load the PDF
