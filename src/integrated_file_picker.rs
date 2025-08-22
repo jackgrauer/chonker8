@@ -140,18 +140,22 @@ impl IntegratedFilePicker {
                 Clear(ClearType::CurrentLine)
             )?;
 
-            // Force truncate to terminal width
+            // Force truncate to terminal width (respecting UTF-8 boundaries)
             let display_str = if clean_path.len() > max_path_width {
                 if let Some(filename) = clean_path.split('/').last() {
                     if filename.len() <= max_path_width - 4 {
                         format!(".../{}", filename)
                     } else {
-                        let truncate_len = max_path_width.saturating_sub(3).min(filename.len());
-                        format!("{}...", &filename[..truncate_len])
+                        // Truncate at character boundary, not byte boundary
+                        let max_chars = max_path_width.saturating_sub(3);
+                        let truncated: String = filename.chars().take(max_chars).collect();
+                        format!("{}...", truncated)
                     }
                 } else {
-                    let truncate_len = max_path_width.saturating_sub(3).min(clean_path.len());
-                    format!("{}...", &clean_path[..truncate_len])
+                    // Truncate at character boundary, not byte boundary
+                    let max_chars = max_path_width.saturating_sub(3);
+                    let truncated: String = clean_path.chars().take(max_chars).collect();
+                    format!("{}...", truncated)
                 }
             } else {
                 clean_path.to_string()
