@@ -133,6 +133,23 @@ impl UIRenderer {
         }
     }
     
+    fn get_message_color(&self, message: &str) -> Color {
+        // Simple syntax highlighting based on message content
+        if message.contains("ERROR") || message.contains("failed") || message.contains("error:") {
+            Color::Red
+        } else if message.contains("WARNING") || message.contains("warning:") {
+            Color::Yellow
+        } else if message.contains("SUCCESS") || message.contains("successful") || message.contains("complete") {
+            Color::Green
+        } else if message.contains("[EXTRACTION]") || message.contains("[RUNTIME]") {
+            Color::Cyan
+        } else if message.contains("[BUILD]") {
+            Color::Blue
+        } else {
+            Color::White
+        }
+    }
+    
     pub fn render(&mut self) -> Result<()> {
         match self.current_screen {
             Screen::Demo => self.render_demo_screen(),
@@ -373,12 +390,15 @@ impl UIRenderer {
                 message.clone()
             };
             
+            // Get appropriate color for this message
+            let msg_color = self.get_message_color(&message);
+            
             execute!(
                 stdout(),
                 MoveTo(0, y_pos),
                 SetForegroundColor(Color::Cyan),
                 Print("║ "),
-                SetForegroundColor(Color::White),
+                SetForegroundColor(msg_color),
                 Print(format!("{:<width$}", display_msg, width = max_width)),
                 SetForegroundColor(Color::Cyan),
                 MoveTo(width - 1, y_pos),
