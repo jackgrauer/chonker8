@@ -5,6 +5,25 @@ use std::path::Path;
 use std::collections::HashMap;
 use serde_json;
 
+// Helper function to log to debug file
+fn log_debug(message: &str) {
+    // Print to stderr so it shows in terminal
+    eprintln!("{}", message);
+    
+    // Also write to debug log file
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/chonker8_debug.log")
+    {
+        use std::io::Write;
+        use chrono::Local;
+        let _ = writeln!(file, "[{}] [TOKENIZER] {}", 
+            Local::now().format("%H:%M:%S%.3f"), 
+            message);
+    }
+}
+
 pub struct TrOCRTokenizer {
     tokenizer: Option<Tokenizer>,
     vocab: HashMap<String, u32>,
@@ -16,7 +35,7 @@ pub struct TrOCRTokenizer {
 
 impl TrOCRTokenizer {
     pub fn new() -> Result<Self> {
-        println!("  📚 Loading TrOCR tokenizer...");
+        log_debug("  📚 Loading TrOCR tokenizer...");
         
         // Load vocabulary
         let vocab_path = Path::new("models/vocab.json");
@@ -32,9 +51,9 @@ impl TrOCRTokenizer {
                 id_to_token.insert(*id, token.clone());
             }
             
-            println!("  ✅ Loaded vocabulary with {} tokens", vocab.len());
+            log_debug(&format!("  ✅ Loaded vocabulary with {} tokens", vocab.len()));
         } else {
-            println!("  ⚠️ Vocabulary file not found, using minimal vocab");
+            log_debug("  ⚠️ Vocabulary file not found, using minimal vocab");
             // Minimal vocabulary for testing
             vocab.insert("<s>".to_string(), 0);
             vocab.insert("</s>".to_string(), 2);
@@ -49,7 +68,7 @@ impl TrOCRTokenizer {
             match Tokenizer::from_file("models/tokenizer.json") {
                 Ok(t) => Some(t),
                 Err(e) => {
-                    println!("  ⚠️ Failed to load tokenizer file: {:?}", e);
+                    log_debug(&format!("  ⚠️ Failed to load tokenizer file: {:?}", e));
                     None
                 }
             }
@@ -118,7 +137,7 @@ pub struct LayoutLMTokenizer {
 
 impl LayoutLMTokenizer {
     pub fn new() -> Result<Self> {
-        println!("  📚 Loading LayoutLM tokenizer...");
+        log_debug("  📚 Loading LayoutLM tokenizer...");
         
         // Try to load LayoutLM vocabulary
         let vocab_path = Path::new("models/layoutlm_vocab.json");
@@ -127,7 +146,7 @@ impl LayoutLMTokenizer {
         if vocab_path.exists() {
             let vocab_str = std::fs::read_to_string(vocab_path)?;
             vocab = serde_json::from_str(&vocab_str)?;
-            println!("  ✅ Loaded LayoutLM vocabulary with {} tokens", vocab.len());
+            log_debug(&format!("  ✅ Loaded LayoutLM vocabulary with {} tokens", vocab.len()));
         }
         
         // Load tokenizer if available
@@ -135,7 +154,7 @@ impl LayoutLMTokenizer {
             match Tokenizer::from_file("models/layoutlm_tokenizer.json") {
                 Ok(t) => Some(t),
                 Err(e) => {
-                    println!("  ⚠️ Failed to load tokenizer: {:?}", e);
+                    log_debug(&format!("  ⚠️ Failed to load tokenizer: {:?}", e));
                     None
                 }
             }
