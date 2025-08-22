@@ -32,6 +32,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # File picker with fuzzy finding
 nucleo = "0.5"
 dirs = "5.0"
+chrono = "0.4"
 
 # PDF display
 viuer = "0.7"

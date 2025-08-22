@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     execute,
-    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor, Attribute, SetAttribute},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
 };
 use std::io::{self, stdout, Write};
@@ -18,6 +18,7 @@ pub enum Screen {
     Demo,
     FilePicker,
     PdfViewer,
+    Debug,
 }
 
 pub struct UIRenderer {
@@ -34,6 +35,11 @@ pub struct UIRenderer {
     current_pdf_path: Option<PathBuf>,
     current_pdf_image: Option<DynamicImage>,
     dark_mode: bool,
+    extraction_method: Option<String>,
+    extraction_quality: Option<f32>,
+    extraction_timestamp: Option<String>,
+    debug_messages: Vec<String>,
+    debug_scroll_offset: usize,
 }
 
 impl UIRenderer {
@@ -56,11 +62,16 @@ impl UIRenderer {
             cursor_x: 0,
             cursor_y: 0,
             current_screen: Screen::Demo,
-            available_screens: vec![Screen::Demo, Screen::FilePicker, Screen::PdfViewer],
+            available_screens: vec![Screen::Demo, Screen::FilePicker, Screen::PdfViewer, Screen::Debug],
             file_picker,
             current_pdf_path: None,
             current_pdf_image: None,
             dark_mode: false,
+            extraction_method: None,
+            extraction_quality: None,
+            extraction_timestamp: None,
+            debug_messages: Vec::new(),
+            debug_scroll_offset: 0,
         }
     }
     
@@ -76,19 +87,55 @@ impl UIRenderer {
         self.total_pages = total;
     }
     
+    pub fn add_debug_message(&mut self, message: String) {
+        // Add timestamp to each message
+        let timestamped = format!("[{}] {}", 
+            chrono::Local::now().format("%H:%M:%S%.3f"), 
+            message
+        );
+        self.debug_messages.push(timestamped);
+        
+        // Keep only last 1000 messages to avoid memory issues
+        if self.debug_messages.len() > 1000 {
+            self.debug_messages.drain(0..100);
+        }
+    }
+    
+    pub fn load_debug_log(&mut self) {
+        // Read any new messages from the debug log file
+        if let Ok(contents) = std::fs::read_to_string("/tmp/chonker8_debug.log") {
+            for line in contents.lines() {
+                // Check if we already have this message (avoid duplicates)
+                if !self.debug_messages.contains(&line.to_string()) {
+                    self.debug_messages.push(line.to_string());
+                }
+            }
+            
+            // Keep only last 1000 messages
+            if self.debug_messages.len() > 1000 {
+                self.debug_messages.drain(0..self.debug_messages.len() - 1000);
+            }
+            
+            // Don't clear the log file - let it accumulate and rely on deduplication
+            // This ensures build warnings persist across multiple reads
+        }
+    }
+    
     pub fn render(&mut self) -> Result<()> {
         match self.current_screen {
             Screen::Demo => self.render_demo_screen(),
             Screen::FilePicker => self.render_file_picker_screen(),
             Screen::PdfViewer => self.render_pdf_screen(),
+            Screen::Debug => self.render_debug_screen(),
         }
     }
     
-    pub fn render_with_file_picker(&self, file_picker: &mut IntegratedFilePicker) -> Result<()> {
+    pub fn render_with_file_picker(&mut self, file_picker: &mut IntegratedFilePicker) -> Result<()> {
         match self.current_screen {
             Screen::Demo => self.render_demo_screen(),
             Screen::FilePicker => self.render_integrated_file_picker_screen(file_picker),
             Screen::PdfViewer => self.render_pdf_screen(),
+            Screen::Debug => self.render_debug_screen(),
         }
     }
     
@@ -255,6 +302,116 @@ impl UIRenderer {
             SetForegroundColor(Color::White),
             Print(format!(" {:<width$} ", status_text, width = width as usize - 2)),
             ResetColor
+        )?;
+        
+        stdout().flush()?;
+        Ok(())
+    }
+    
+    fn render_debug_screen(&mut self) -> Result<()> {
+        // Load any new debug messages from the log file
+        self.load_debug_log();
+        
+        let (width, height) = terminal::size()?;
+        
+        // Clear screen
+        execute!(
+            stdout(),
+            Clear(ClearType::All),
+            MoveTo(0, 0)
+        )?;
+        
+        // Draw header
+        execute!(
+            stdout(),
+            MoveTo(0, 0),
+            SetForegroundColor(Color::Cyan),
+            Print(format!("╔{}╗", "═".repeat((width - 2) as usize))),
+            MoveTo(0, 1),
+            Print("║"),
+            MoveTo(2, 1),
+            SetForegroundColor(Color::Yellow),
+            Print("DEBUG OUTPUT"),
+            SetForegroundColor(Color::Cyan),
+            MoveTo(width - 1, 1),
+            Print("║"),
+            MoveTo(0, 2),
+            Print(format!("╠{}╣", "═".repeat((width - 2) as usize))),
+            ResetColor
+        )?;
+        
+        // Calculate content area
+        let content_start_y = 3;
+        let content_height = height.saturating_sub(5); // Leave room for header and status
+        
+        // Display debug messages
+        let visible_messages = self.debug_messages
+            .iter()
+            .skip(self.debug_scroll_offset)
+            .take(content_height as usize);
+        
+        for (i, message) in visible_messages.enumerate() {
+            let y_pos = content_start_y + i as u16;
+            
+            // Truncate message to fit screen width
+            let max_width = (width - 4) as usize;
+            let display_msg = if message.len() > max_width {
+                format!("{}...", &message.chars().take(max_width - 3).collect::<String>())
+            } else {
+                message.clone()
+            };
+            
+            execute!(
+                stdout(),
+                MoveTo(0, y_pos),
+                SetForegroundColor(Color::Cyan),
+                Print("║ "),
+                SetForegroundColor(Color::White),
+                Print(format!("{:<width$}", display_msg, width = max_width)),
+                SetForegroundColor(Color::Cyan),
+                MoveTo(width - 1, y_pos),
+                Print("║"),
+                ResetColor
+            )?;
+        }
+        
+        // Fill empty lines
+        for i in self.debug_messages.len()..content_height as usize {
+            let y_pos = content_start_y + i as u16;
+            execute!(
+                stdout(),
+                MoveTo(0, y_pos),
+                SetForegroundColor(Color::Cyan),
+                Print("║"),
+                MoveTo(width - 1, y_pos),
+                Print("║"),
+                ResetColor
+            )?;
+        }
+        
+        // Draw bottom border
+        execute!(
+            stdout(),
+            MoveTo(0, height - 2),
+            SetForegroundColor(Color::Cyan),
+            Print(format!("╚{}╝", "═".repeat((width - 2) as usize))),
+            ResetColor
+        )?;
+        
+        // Status bar
+        let status_text = format!(
+            " Messages: {} | Showing: {}-{} | ↑↓: Scroll | Tab: Next Screen | Esc: Exit ",
+            self.debug_messages.len(),
+            self.debug_scroll_offset + 1,
+            (self.debug_scroll_offset + content_height as usize).min(self.debug_messages.len())
+        );
+        
+        execute!(
+            stdout(),
+            MoveTo(0, height - 1),
+            SetAttribute(Attribute::Reverse),
+            Print(format!("{:<width$}", status_text, width = width as usize)),
+            SetAttribute(Attribute::NoReverse)
         )?;
         
         stdout().flush()?;
@@ -558,14 +715,32 @@ impl UIRenderer {
     }
     
     pub fn scroll_up(&mut self) {
-        if self.scroll_offset > 0 {
-            self.scroll_offset -= 1;
+        match self.current_screen {
+            Screen::Debug => {
+                if self.debug_scroll_offset > 0 {
+                    self.debug_scroll_offset -= 1;
+                }
+            }
+            _ => {
+                if self.scroll_offset > 0 {
+                    self.scroll_offset -= 1;
+                }
+            }
         }
     }
     
     pub fn scroll_down(&mut self) {
-        if self.scroll_offset < self.pdf_content.len().saturating_sub(10) {
-            self.scroll_offset += 1;
+        match self.current_screen {
+            Screen::Debug => {
+                if self.debug_scroll_offset < self.debug_messages.len().saturating_sub(10) {
+                    self.debug_scroll_offset += 1;
+                }
+            }
+            _ => {
+                if self.scroll_offset < self.pdf_content.len().saturating_sub(10) {
+                    self.scroll_offset += 1;
+                }
+            }
         }
     }
     
@@ -645,46 +820,102 @@ impl UIRenderer {
             Screen::Demo => "Demo",
             Screen::FilePicker => "File Picker", 
             Screen::PdfViewer => "PDF Viewer",
+            Screen::Debug => "Debug",
         }
     }
     
     pub fn load_pdf(&mut self, pdf_path: PathBuf) -> Result<()> {
         use crate::pdf_extraction::{DocumentAnalyzer};
         
-        eprintln!("[DEBUG] UIRenderer::load_pdf called with: {:?}", pdf_path);
+        // Clear debug messages for new PDF load
+        self.debug_messages.clear();
+        self.debug_scroll_offset = 0;
+        
+        let msg = format!("UIRenderer::load_pdf called with: {:?}", pdf_path);
+        self.add_debug_message(msg.clone());
+        eprintln!("[DEBUG] {}", msg);
         
         // Load PDF page count - chonker7 style with fresh instance
+        self.add_debug_message("Getting page count...".to_string());
         eprintln!("[DEBUG] Getting page count...");
         self.total_pages = content_extractor::get_page_count(&pdf_path)?;
         self.current_page = 1;
-        eprintln!("[DEBUG] Page count: {}", self.total_pages);
+        let msg = format!("Page count: {}", self.total_pages);
+        self.add_debug_message(msg.clone());
+        eprintln!("[DEBUG] {}", msg);
         
         // Render first page image with larger dimensions for better visibility
+        self.add_debug_message("Rendering PDF page...".to_string());
         eprintln!("[DEBUG] Rendering PDF page...");
         let image = pdf_renderer::render_pdf_page(&pdf_path, 0, 1200, 1600)?;
+        self.add_debug_message("PDF page rendered".to_string());
         eprintln!("[DEBUG] PDF page rendered");
         
         // Use intelligent document-agnostic extraction
+        self.add_debug_message("Creating analyzer...".to_string());
         eprintln!("[DEBUG] Creating analyzer...");
         let analyzer = DocumentAnalyzer::new()?;
+        self.add_debug_message("Analyzing page...".to_string());
         eprintln!("[DEBUG] Analyzing page...");
         let fingerprint = analyzer.analyze_page(&pdf_path, 0)?;
-        eprintln!("[DEBUG] Analysis complete: text={:.1}%, image={:.1}%, has_tables={}, text_quality={:.2}", 
+        let msg = format!("Analysis complete: text={:.1}%, image={:.1}%, has_tables={}, text_quality={:.2}", 
             fingerprint.text_coverage * 100.0, 
             fingerprint.image_coverage * 100.0,
             fingerprint.has_tables,
             fingerprint.text_quality);
+        self.add_debug_message(msg.clone());
+        eprintln!("[DEBUG] {}", msg);
         
         // Use the intelligent ExtractionRouter to extract text
+        self.add_debug_message("Starting intelligent text extraction...".to_string());
         eprintln!("[DEBUG] Starting intelligent text extraction...");
         let extraction_result = crate::pdf_extraction::ExtractionRouter::extract_with_fallback_sync(&pdf_path, 0, &fingerprint)?;
-        eprintln!("[DEBUG] Extraction complete using method: {:?}, quality: {:.2}", 
+        let msg = format!("Extraction complete using method: {:?}, quality: {:.2}", 
             extraction_result.method, extraction_result.quality_score);
+        self.add_debug_message(msg.clone());
+        eprintln!("[DEBUG] {}", msg);
         
-        let text = extraction_result.text;
+        // Store metadata
+        self.extraction_method = Some(format!("{:?}", extraction_result.method));
+        self.extraction_quality = Some(extraction_result.quality_score);
+        self.extraction_timestamp = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+        
+        // Create metadata header with better formatting
+        let filename = pdf_path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .chars()
+            .take(60)
+            .collect::<String>();
+        
+        let metadata_header = format!(
+            "╔════════════════════════════════════════════════════════════════════════════════╗\n\
+             ║ PDF EXTRACTION METADATA                                                        ║\n\
+             ╠════════════════════════════════════════════════════════════════════════════════╣\n\
+             ║ File: {:<73}║\n\
+             ║ Page: {}/{:<70}║\n\
+             ║ Method: {:<72}║\n\
+             ║ Quality Score: {:.1}%{:<64}║\n\
+             ║ Text Coverage: {:.1}%  |  Image Coverage: {:.1}%  |  Has Tables: {:<20}║\n\
+             ║ Extracted: {:<68}║\n\
+             ╚════════════════════════════════════════════════════════════════════════════════╝\n\n",
+            filename,
+            self.current_page,
+            self.total_pages,
+            format!("{:?}", extraction_result.method),
+            extraction_result.quality_score * 100.0,
+            "",
+            fingerprint.text_coverage * 100.0,
+            fingerprint.image_coverage * 100.0,
+            if fingerprint.has_tables { "Yes" } else { "No" },
+            self.extraction_timestamp.as_ref().unwrap()
+        );
+        
+        // Combine metadata with extracted text
+        let text_with_metadata = format!("{}{}", metadata_header, extraction_result.text);
         
         // Convert extracted text to grid format for display
-        let text_matrix = self.text_to_matrix(&text, 200, 100);
+        let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);
         
         // Update state
         self.current_pdf_path = Some(pdf_path);

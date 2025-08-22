@@ -68,7 +68,13 @@ impl TrOCRTokenizer {
     }
     
     pub fn decode_ids(&self, token_ids: &[u32]) -> String {
-        let mut text = String::new();
+        // If tokenizer library is available, use it directly
+        if let Some(ref tokenizer) = self.tokenizer {
+            return tokenizer.decode(&token_ids, true).unwrap_or_default();
+        }
+        
+        // Otherwise, manual decode with proper byte-level BPE handling
+        let mut decoded_tokens = Vec::new();
         
         for &id in token_ids {
             if id == self.eos_token_id {
@@ -76,17 +82,23 @@ impl TrOCRTokenizer {
             }
             
             if let Some(token) = self.id_to_token.get(&id) {
-                // Handle special tokens
-                if !token.starts_with('<') || !token.ends_with('>') {
-                    // GPT2-style byte-level BPE decoding
-                    let decoded = token.replace("Ġ", " ");
-                    text.push_str(&decoded);
+                // Skip special tokens
+                if token.starts_with('<') && token.ends_with('>') {
+                    continue;
                 }
+                
+                // Handle Ġ prefix (represents space in GPT-2 BPE)
+                let decoded = if token.starts_with("Ġ") {
+                    format!(" {}", &token[3..]) // Skip the 3-byte "Ġ" prefix
+                } else {
+                    token.clone()
+                };
+                
+                decoded_tokens.push(decoded);
             }
         }
         
-        // Clean up the text
-        text.trim().to_string()
+        decoded_tokens.join("").trim().to_string()
     }
     
     pub fn get_decoder_start_ids(&self) -> Vec<i64> {

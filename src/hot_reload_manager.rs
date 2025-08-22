@@ -1,6 +1,7 @@
 // Hot-reload manager for Rust code changes
 use anyhow::Result;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
+use chrono;
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -141,13 +142,64 @@ impl HotReloadManager {
             
             println!("🔨 Building {}...", request.target);
             
-            // Simple build execution
-            let success = Command::new("cargo")
+            // Log build start to debug file
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/chonker8_debug.log")
+            {
+                use std::io::Write;
+                let _ = writeln!(file, "[{}] [BUILD] Starting build for {}...", 
+                    chrono::Local::now().format("%H:%M:%S%.3f"), 
+                    request.target);
+            }
+            
+            // Simple build execution - capture output to prevent screen corruption
+            // Don't use --quiet so we can see warnings
+            let build_result = Command::new("cargo")
                 .env("DYLD_LIBRARY_PATH", "./lib")
-                .args(&["build", "--release", "--bin", &request.target, "--quiet"])
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false);
+                .args(&["build", "--release", "--bin", &request.target])
+                .output();
+            
+            let (success, stderr_output, stdout_output) = match build_result {
+                Ok(output) => {
+                    let success = output.status.success();
+                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    (success, stderr, stdout)
+                }
+                Err(e) => {
+                    eprintln!("[BUILD] Failed to execute cargo: {}", e);
+                    (false, format!("Failed to execute cargo: {}", e), String::new())
+                }
+            };
+            
+            // Log build output to debug instead of letting it corrupt the screen
+            // Log both stderr (errors) and stdout (warnings/info) 
+            if !stderr_output.is_empty() || !stdout_output.is_empty() {
+                // Write to a debug file that UIRenderer can read
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/chonker8_debug.log")
+                {
+                    use std::io::Write;
+                    // Log stdout first (usually contains compilation progress and warnings)
+                    for line in stdout_output.lines() {
+                        let _ = writeln!(file, "[{}] [BUILD] {}", 
+                            chrono::Local::now().format("%H:%M:%S%.3f"), 
+                            line);
+                        eprintln!("[BUILD] {}", line);
+                    }
+                    // Then log stderr (usually contains errors)
+                    for line in stderr_output.lines() {
+                        let _ = writeln!(file, "[{}] [BUILD] {}", 
+                            chrono::Local::now().format("%H:%M:%S%.3f"), 
+                            line);
+                        eprintln!("[BUILD] {}", line);
+                    }
+                }
+            }
             
             let should_restart = request.target == "chonker8-hot";
             
