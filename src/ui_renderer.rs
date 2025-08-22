@@ -40,6 +40,7 @@ pub struct UIRenderer {
     extraction_timestamp: Option<String>,
     debug_messages: Vec<String>,
     debug_scroll_offset: usize,
+    debug_messages_loaded: bool,
 }
 
 impl UIRenderer {
@@ -72,6 +73,7 @@ impl UIRenderer {
             extraction_timestamp: None,
             debug_messages: Vec::new(),
             debug_scroll_offset: 0,
+            debug_messages_loaded: false,
         }
     }
     
@@ -338,9 +340,6 @@ impl UIRenderer {
     }
     
     fn render_debug_screen(&mut self) -> Result<()> {
-        // Load any new debug messages from the log file
-        self.load_debug_log();
-        
         let (width, height) = terminal::size()?;
         
         // Clear screen
@@ -794,7 +793,8 @@ impl UIRenderer {
             .position(|s| s == &self.current_screen)
             .unwrap_or(0);
         let next_index = (current_index + 1) % self.available_screens.len();
-        self.current_screen = self.available_screens[next_index].clone();
+        let next_screen = self.available_screens[next_index].clone();
+        self.set_screen(next_screen);
     }
     
     pub fn prev_screen(&mut self) {
@@ -806,7 +806,8 @@ impl UIRenderer {
         } else {
             current_index - 1
         };
-        self.current_screen = self.available_screens[prev_index].clone();
+        let prev_screen = self.available_screens[prev_index].clone();
+        self.set_screen(prev_screen);
     }
     
     pub fn get_current_screen(&self) -> &Screen {
@@ -818,6 +819,11 @@ impl UIRenderer {
     }
     
     pub fn set_screen(&mut self, screen: Screen) {
+        // If switching to debug screen and messages haven't been loaded yet, load them
+        if screen == Screen::Debug && !self.debug_messages_loaded {
+            self.load_debug_log();
+            self.debug_messages_loaded = true;
+        }
         self.current_screen = screen;
     }
     
@@ -829,7 +835,7 @@ impl UIRenderer {
     }
     
     pub fn scroll_debug_down(&mut self) {
-        let max_offset = self.debug_messages.len().saturating_sub(1);
+        let max_offset = self.get_debug_max_scroll_offset();
         if self.debug_scroll_offset < max_offset {
             self.debug_scroll_offset += 1;
         }
@@ -840,7 +846,7 @@ impl UIRenderer {
     }
     
     pub fn scroll_debug_page_down(&mut self) {
-        let max_offset = self.debug_messages.len().saturating_sub(1);
+        let max_offset = self.get_debug_max_scroll_offset();
         self.debug_scroll_offset = (self.debug_scroll_offset + 10).min(max_offset);
     }
     
@@ -849,7 +855,22 @@ impl UIRenderer {
     }
     
     pub fn scroll_debug_to_bottom(&mut self) {
-        self.debug_scroll_offset = self.debug_messages.len().saturating_sub(1);
+        self.debug_scroll_offset = self.get_debug_max_scroll_offset();
+    }
+    
+    fn get_debug_max_scroll_offset(&self) -> usize {
+        // Calculate the visible height for debug content
+        // Terminal height minus header (3 lines) and status bar (2 lines) = content height
+        let terminal_height = crossterm::terminal::size().unwrap_or((80, 24)).1 as usize;
+        let content_height = terminal_height.saturating_sub(5);
+        
+        // Maximum scroll offset is total messages minus what fits on screen
+        // If all messages fit on screen, max offset is 0 (no scrolling needed)
+        if self.debug_messages.len() <= content_height {
+            0
+        } else {
+            self.debug_messages.len() - content_height
+        }
     }
     
     pub fn handle_file_picker_input(&mut self, key: crossterm::event::KeyEvent) -> Result<Option<String>> {

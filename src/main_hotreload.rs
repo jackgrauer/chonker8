@@ -303,7 +303,22 @@ impl App {
                     self.renderer.scroll_debug_down();
                     self.needs_redraw = true;
                 }
-                _ => {}
+                // Explicitly ignore all other mouse events to prevent terminal corruption
+                MouseEventKind::Moved => {
+                    // Ignore mouse movement
+                }
+                MouseEventKind::Down(_) => {
+                    // Ignore mouse button presses
+                }
+                MouseEventKind::Up(_) => {
+                    // Ignore mouse button releases
+                }
+                MouseEventKind::Drag(_) => {
+                    // Ignore mouse drag
+                }
+                _ => {
+                    // Ignore any other mouse events
+                }
             }
         }
         Ok(())
