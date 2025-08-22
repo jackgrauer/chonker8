@@ -412,7 +412,7 @@ impl UIRenderer {
         
         // Status bar
         let status_text = format!(
-            " Messages: {} | Showing: {}-{} | ↑↓: Scroll | Tab: Next Screen | Esc: Exit ",
+            " Msgs: {} | {}-{} | ↑↓/Mouse: Scroll | PgUp/Dn | Home/End | Tab | Esc ",
             self.debug_messages.len(),
             self.debug_scroll_offset + 1,
             (self.debug_scroll_offset + content_height as usize).min(self.debug_messages.len())
@@ -799,6 +799,37 @@ impl UIRenderer {
     
     pub fn set_screen(&mut self, screen: Screen) {
         self.current_screen = screen;
+    }
+    
+    // Debug screen scrolling methods
+    pub fn scroll_debug_up(&mut self) {
+        if self.debug_scroll_offset > 0 {
+            self.debug_scroll_offset -= 1;
+        }
+    }
+    
+    pub fn scroll_debug_down(&mut self) {
+        let max_offset = self.debug_messages.len().saturating_sub(1);
+        if self.debug_scroll_offset < max_offset {
+            self.debug_scroll_offset += 1;
+        }
+    }
+    
+    pub fn scroll_debug_page_up(&mut self) {
+        self.debug_scroll_offset = self.debug_scroll_offset.saturating_sub(10);
+    }
+    
+    pub fn scroll_debug_page_down(&mut self) {
+        let max_offset = self.debug_messages.len().saturating_sub(1);
+        self.debug_scroll_offset = (self.debug_scroll_offset + 10).min(max_offset);
+    }
+    
+    pub fn scroll_debug_to_top(&mut self) {
+        self.debug_scroll_offset = 0;
+    }
+    
+    pub fn scroll_debug_to_bottom(&mut self) {
+        self.debug_scroll_offset = self.debug_messages.len().saturating_sub(1);
     }
     
     pub fn handle_file_picker_input(&mut self, key: crossterm::event::KeyEvent) -> Result<Option<String>> {

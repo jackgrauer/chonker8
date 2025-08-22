@@ -9,7 +9,7 @@ mod build_system;
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEvent},
+    event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
     execute,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -96,7 +96,7 @@ impl App {
     fn run(&mut self) -> Result<()> {
         // Setup terminal
         terminal::enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen, Hide)?;
+        execute!(stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
         
         // Initial render
         self.renderer.render()?;
@@ -180,6 +180,7 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) => self.handle_key(key)?,
+                    Event::Mouse(mouse) => self.handle_mouse(mouse)?,
                     Event::Resize(_, _) => {
                         // Complete screen reset on resize
                         execute!(
@@ -199,13 +200,50 @@ impl App {
         }
         
         // Cleanup
-        execute!(stdout(), Show, LeaveAlternateScreen)?;
+        execute!(stdout(), Show, LeaveAlternateScreen, DisableMouseCapture)?;
         terminal::disable_raw_mode()?;
         
         Ok(())
     }
     
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        // Check if we're on the DEBUG screen and handle scrolling
+        if *self.renderer.current_screen() == Screen::Debug {
+            match key.code {
+                KeyCode::Up => {
+                    self.renderer.scroll_debug_up();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    self.renderer.scroll_debug_down();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::PageUp => {
+                    self.renderer.scroll_debug_page_up();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::PageDown => {
+                    self.renderer.scroll_debug_page_down();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::Home => {
+                    self.renderer.scroll_debug_to_top();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::End => {
+                    self.renderer.scroll_debug_to_bottom();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        
         // Check if we're on the file picker screen and handle file picker input
         if *self.renderer.current_screen() == Screen::FilePicker {
             // Try to handle file picker input
@@ -250,6 +288,24 @@ impl App {
             _ => {}
         }
         
+        Ok(())
+    }
+    
+    fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
+        // Handle mouse wheel scrolling on DEBUG screen
+        if *self.renderer.current_screen() == Screen::Debug {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.renderer.scroll_debug_up();
+                    self.needs_redraw = true;
+                }
+                MouseEventKind::ScrollDown => {
+                    self.renderer.scroll_debug_down();
+                    self.needs_redraw = true;
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
     
