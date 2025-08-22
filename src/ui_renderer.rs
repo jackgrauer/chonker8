@@ -93,7 +93,19 @@ impl UIRenderer {
             chrono::Local::now().format("%H:%M:%S%.3f"), 
             message
         );
-        self.debug_messages.push(timestamped);
+        self.debug_messages.push(timestamped.clone());
+        
+        // Also write to debug log file so it persists and can be loaded in DEBUG screen
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/chonker8_debug.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "[{}] [RUNTIME] {}", 
+                chrono::Local::now().format("%H:%M:%S%.3f"), 
+                message);
+        }
         
         // Keep only last 1000 messages to avoid memory issues
         if self.debug_messages.len() > 1000 {

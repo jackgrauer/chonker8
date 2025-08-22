@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::Path;
 use super::document_analyzer::PageFingerprint;
 use image::DynamicImage;
+use chrono;
 
 /// Extraction methods available
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +38,20 @@ impl ExtractionResult {
 pub struct ExtractionRouter;
 
 impl ExtractionRouter {
+    /// Helper to log to debug file
+    fn log_to_debug_file(message: &str) {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/chonker8_debug.log")
+        {
+            use std::io::Write;
+            use chrono::Local;
+            let _ = writeln!(file, "[{}] [EXTRACTION] {}", 
+                Local::now().format("%H:%M:%S%.3f"), 
+                message);
+        }
+    }
     /// Determine extraction strategy based on page fingerprint
     pub fn determine_strategy(fingerprint: &PageFingerprint) -> ExtractionMethod {
         // Decision tree based on content analysis
@@ -92,12 +107,15 @@ impl ExtractionRouter {
     ) -> Result<ExtractionResult> {
         let primary_method = Self::determine_strategy(fingerprint);
         eprintln!("[DEBUG] Primary extraction method selected: {:?}", primary_method);
+        Self::log_to_debug_file(&format!("Primary extraction method selected: {:?}", primary_method));
         
         // Try primary method
         if let Ok(result) = Self::execute_extraction_sync(pdf_path, page_index, &primary_method) {
             eprintln!("[DEBUG] Quality score: {:.2}", result.quality_score);
+            Self::log_to_debug_file(&format!("Quality score: {:.2}", result.quality_score));
             if result.quality_score >= 0.7 {
                 eprintln!("[DEBUG] Using primary method: {:?}", primary_method);
+                Self::log_to_debug_file(&format!("Using primary method: {:?}", primary_method));
                 return Ok(result);
             }
         }
@@ -106,9 +124,11 @@ impl ExtractionRouter {
         let fallbacks = Self::get_fallback_chain(&primary_method);
         for fallback_method in fallbacks {
             eprintln!("[DEBUG] Trying fallback method: {:?}", fallback_method);
+            Self::log_to_debug_file(&format!("Trying fallback method: {:?}", fallback_method));
             if let Ok(result) = Self::execute_extraction_sync(pdf_path, page_index, &fallback_method) {
                 if result.quality_score >= 0.5 {
                     eprintln!("[DEBUG] Using fallback method: {:?}", fallback_method);
+                    Self::log_to_debug_file(&format!("Using fallback method: {:?}", fallback_method));
                     return Ok(result);
                 }
             }
@@ -116,6 +136,7 @@ impl ExtractionRouter {
         
         // Last resort - just use pdftotext
         eprintln!("[DEBUG] Using last resort: pdftotext");
+        Self::log_to_debug_file("Using last resort: pdftotext");
         Self::execute_extraction_sync(pdf_path, page_index, &ExtractionMethod::FastText)
     }
     
@@ -184,6 +205,7 @@ impl ExtractionRouter {
             ExtractionMethod::OCR => {
                 // Try to use TrOCR model for OCR
                 eprintln!("[DEBUG] Attempting TrOCR extraction...");
+                Self::log_to_debug_file("Attempting TrOCR extraction...");
                 
                 // First render the page to an image
                 // We need to use pdfium directly here since we're in the pdf_extraction module
@@ -198,10 +220,12 @@ impl ExtractionRouter {
                         match crate::pdf_extraction::trocr_extraction::extract_with_simple_trocr_sync(&buffer) {
                             Ok(text) => {
                                 eprintln!("[DEBUG] TrOCR extraction successful");
+                                Self::log_to_debug_file("TrOCR extraction successful");
                                 text
                             }
                             Err(e) => {
                                 eprintln!("[DEBUG] TrOCR failed: {}, falling back to pdftotext", e);
+                                Self::log_to_debug_file(&format!("TrOCR failed: {}, falling back to pdftotext", e));
                                 let output = Command::new("pdftotext")
                                     .args(&[
                                         "-f", &(page_index + 1).to_string(),
@@ -216,6 +240,7 @@ impl ExtractionRouter {
                     }
                     Err(e) => {
                         eprintln!("[DEBUG] Failed to render PDF page: {}, using pdftotext", e);
+                        Self::log_to_debug_file(&format!("Failed to render PDF page: {}, using pdftotext", e));
                         let output = Command::new("pdftotext")
                             .args(&[
                                 "-f", &(page_index + 1).to_string(),
@@ -231,14 +256,17 @@ impl ExtractionRouter {
             ExtractionMethod::LayoutAnalysis => {
                 // Try to use LayoutLMv3 for structured extraction
                 eprintln!("[DEBUG] Attempting LayoutLM extraction...");
+                Self::log_to_debug_file("Attempting LayoutLM extraction...");
                 
                 match crate::pdf_extraction::layoutlm_extraction::extract_with_layoutlm_sync(pdf_path, page_index) {
                     Ok(text) => {
                         eprintln!("[DEBUG] LayoutLM extraction successful");
+                        Self::log_to_debug_file("LayoutLM extraction successful");
                         text
                     }
                     Err(e) => {
                         eprintln!("[DEBUG] LayoutLM failed: {}, falling back to pdftotext with layout", e);
+                        Self::log_to_debug_file(&format!("LayoutLM failed: {}, falling back to pdftotext with layout", e));
                         let output = Command::new("pdftotext")
                             .args(&[
                                 "-f", &(page_index + 1).to_string(),
@@ -258,6 +286,7 @@ impl ExtractionRouter {
         let mut result = ExtractionResult::new(text, method.clone());
         result.extraction_time_ms = start.elapsed().as_millis() as u64;
         eprintln!("[DEBUG] Extraction took {}ms", result.extraction_time_ms);
+        Self::log_to_debug_file(&format!("Extraction took {}ms", result.extraction_time_ms));
         
         Ok(result)
     }
