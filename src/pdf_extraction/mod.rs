@@ -4,6 +4,11 @@ pub mod improved;
 pub mod true_visual;
 pub mod pdftotext_extraction;
 pub mod braille;
+pub mod pdfium_singleton;
+
+// Document-agnostic extraction system
+pub mod document_analyzer;
+pub mod extraction_router;
 
 pub use basic::get_page_count;
 pub use true_visual::render_true_visual;
@@ -28,3 +33,7 @@ pub mod ui_api;
 pub use ocr_engine::{OCREngine, OCRResult};
 pub use document_processor::{DocumentProcessor, ProcessedDocument, ExtractedText, DocumentSection};
 pub use ui_api::{DocumentAIService, UIRequest, UIResponse, create_service};
+
+// Export document-agnostic system
+pub use document_analyzer::{DocumentAnalyzer, PageFingerprint};
+pub use extraction_router::{ExtractionRouter, ExtractionMethod, ExtractionResult};

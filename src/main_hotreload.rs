@@ -66,26 +66,30 @@ impl App {
     }
     
     fn load_pdf(&mut self, path: &str) -> Result<()> {
-        println!("Loading PDF: {}", path);
+        eprintln!("[DEBUG] load_pdf called with: {}", path);
         self.pdf_path = Some(path.to_string());
         
-        // Use the new UIRenderer PDF loading
+        // Load PDF synchronously to avoid runtime issues
         let pdf_path = PathBuf::from(path);
+        eprintln!("[DEBUG] Checking if path exists: {}", pdf_path.exists());
+        
         if pdf_path.exists() {
-            // Create a runtime for the async call
-            let rt = tokio::runtime::Runtime::new()?;
-            
-            match rt.block_on(self.renderer.load_pdf(pdf_path)) {
+            eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
+            // Load synchronously without async runtime
+            match self.renderer.load_pdf(pdf_path) {
                 Ok(()) => {
-                    println!("PDF loaded successfully: {}", path);
+                    eprintln!("[DEBUG] PDF loaded successfully: {}", path);
                 }
                 Err(e) => {
-                    eprintln!("Failed to load PDF: {}", e);
+                    eprintln!("[DEBUG] Failed to load PDF: {}", e);
                 }
             }
+        } else {
+            eprintln!("[DEBUG] Path does not exist!");
         }
         
         self.needs_redraw = true;
+        eprintln!("[DEBUG] load_pdf complete, needs_redraw set");
         Ok(())
     }
     

@@ -455,7 +455,36 @@ impl DocumentAnalyzer {
     }
 }
 
-// Helper function to integrate with existing document_ai module
+// Synchronous text extraction for LayoutLM (simplified for UI integration)
+pub fn extract_with_layoutlm_sync(pdf_path: &Path, page_index: usize) -> Result<String> {
+    use crate::pdf_extraction::pdfium_singleton::with_pdfium;
+    
+    // Check if LayoutLM model exists
+    if !std::path::Path::new("models/layoutlm.onnx").exists() {
+        return Err(anyhow::anyhow!("LayoutLM model not found in models/ directory"));
+    }
+    
+    // For now, extract text with structure awareness using pdfium
+    with_pdfium(|pdfium| {
+        let document = pdfium.load_pdf_from_file(pdf_path, None)?;
+        let page = document.pages().get(page_index as u16)?;
+        let text_page = page.text()?;
+        
+        // Get structured text with layout preservation
+        let mut structured_text = String::new();
+        
+        // Extract all text from the page
+        let all_text = text_page.all();
+        structured_text.push_str(&all_text);
+        
+        // TODO: When model is ready, use actual LayoutLM for table detection
+        eprintln!("[DEBUG] LayoutLM model integration pending, using structured extraction");
+        
+        Ok(structured_text)
+    })
+}
+
+// Helper function to integrate with existing document_ai module (async)
 pub async fn analyze_pdf_structure(
     pdf_path: &Path,
     page_index: usize,

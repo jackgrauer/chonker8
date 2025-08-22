@@ -37,6 +37,9 @@ dirs = "5.0"
 viuer = "0.7"
 image_0_24 = { package = "image", version = "0.24" }
 
+[dev-dependencies]
+rexpect = "0.5"
+
 [[bin]]
 name = "chonker8"
 path = "src/main.rs"
@@ -49,6 +52,10 @@ path = "src/main_hotreload.rs"
 name = "pdf-processor"
 path = "src/bin/pdf_processor.rs"
 
+[[bin]]
+name = "test-extraction"
+path = "src/bin/test_extraction.rs"
 
-[dev-dependencies]
-rexpect = "0.5"
+[[bin]]
+name = "chonker8-demo"
+path = "src/bin/chonker8_demo.rs"

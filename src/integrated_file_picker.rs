@@ -65,7 +65,7 @@ impl IntegratedFilePicker {
         )?;
 
         // Draw header
-        let header_text = "🐹 Chonker8 Hot-Reload File Picker [TEST]";
+        let header_text = "🐹🐹🐹 Chonker8 Hot-Reload File Picker [TEST] 🐹🐹🐹";
         execute!(
             stdout(),
             MoveTo(0, 0),
@@ -120,8 +120,12 @@ impl IntegratedFilePicker {
             let actual_index = self.scroll_offset + display_i;
             let path = item.data.as_ref();
 
-            // Strip the /Users/jack/Documents/ prefix for cleaner display
-            let clean_path = if path.starts_with("/Users/jack/Documents/") {
+            // Strip common prefixes for cleaner display
+            let clean_path = if path.starts_with("/Users/jack/Downloads/") {
+                &path[22..] // Length of "/Users/jack/Downloads/"
+            } else if path.starts_with("/Users/jack/Desktop/") {
+                &path[20..] // Length of "/Users/jack/Desktop/"
+            } else if path.starts_with("/Users/jack/Documents/") {
                 &path[22..] // Length of "/Users/jack/Documents/"
             } else {
                 path
@@ -289,7 +293,12 @@ impl IntegratedFilePicker {
 
 /// Find all PDF files in current directory and subdirectories
 fn find_pdf_files() -> Result<Vec<String>> {
-    let search_dirs = ["/Users/jack/Documents", ".", "/Users/jack/Desktop"];
+    let search_dirs = [
+        "/Users/jack/Downloads",
+        "/Users/jack/Desktop", 
+        "/Users/jack/Documents",
+        "."
+    ];
     
     let mut all_files = Vec::new();
     

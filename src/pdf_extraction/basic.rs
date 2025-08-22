@@ -2,6 +2,7 @@
 use anyhow::Result;
 use pdfium_render::prelude::*;
 use std::path::Path;
+use super::pdfium_singleton::with_pdfium;
 // Removed unused config import
 
 pub async fn extract_to_matrix(
@@ -10,12 +11,8 @@ pub async fn extract_to_matrix(
     width: usize,
     height: usize,
 ) -> Result<Vec<Vec<char>>> {
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
-            .or_else(|_| Pdfium::bind_to_system_library())?
-    );
-    
-    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
+    with_pdfium(|pdfium| {
+        let document = pdfium.load_pdf_from_file(pdf_path, None)?;
     let page = document.pages().get(page_num as u16)?;
     
     // Create empty grid (cache-friendly initialization)
@@ -68,7 +65,8 @@ pub async fn extract_to_matrix(
         }
     }
     
-    Ok(grid)
+        Ok(grid)
+    })
 }
 
 pub async fn extract_with_ml(_pdf_path: &Path, _page_num: usize, width: usize, height: usize) -> Result<Vec<Vec<char>>> {
@@ -77,10 +75,37 @@ pub async fn extract_with_ml(_pdf_path: &Path, _page_num: usize, width: usize, h
 }
 
 pub fn get_page_count(pdf_path: &Path) -> Result<usize> {
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
-            .or_else(|_| Pdfium::bind_to_system_library())?
-    );
-    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
-    Ok(document.pages().len() as usize)
+    with_pdfium(|pdfium| {
+        let document = pdfium.load_pdf_from_file(pdf_path, None)?;
+        Ok(document.pages().len() as usize)
+    })
+}
+
+// Simple text extraction for router
+pub async fn extract_with_pdfium(pdf_path: &Path, page_index: usize) -> Result<String> {
+    extract_with_pdfium_sync(pdf_path, page_index)
+}
+
+// Synchronous version to avoid async runtime issues
+pub fn extract_with_pdfium_sync(pdf_path: &Path, page_index: usize) -> Result<String> {
+    eprintln!("[DEBUG] extract_with_pdfium_sync: Starting extraction for {:?} page {}", pdf_path, page_index);
+    
+    with_pdfium(|pdfium| {
+        eprintln!("[DEBUG] Got Pdfium singleton");
+        
+        eprintln!("[DEBUG] Loading PDF document...");
+        let document = pdfium.load_pdf_from_file(pdf_path, None)?;
+        eprintln!("[DEBUG] Document loaded, getting page {}...", page_index);
+        
+        let page = document.pages().get(page_index as u16)?;
+        eprintln!("[DEBUG] Got page, extracting text...");
+        
+        let text_page = page.text()?;
+        eprintln!("[DEBUG] Got text page object, calling all()...");
+        
+        let text = text_page.all();
+        eprintln!("[DEBUG] Text extraction complete, {} chars", text.len());
+        
+        Ok(text)
+    })
 }

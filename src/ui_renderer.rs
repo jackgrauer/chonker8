@@ -648,23 +648,90 @@ impl UIRenderer {
         }
     }
     
-    pub async fn load_pdf(&mut self, pdf_path: PathBuf) -> Result<()> {
-        // Load PDF page count
+    pub fn load_pdf(&mut self, pdf_path: PathBuf) -> Result<()> {
+        use crate::pdf_extraction::{DocumentAnalyzer};
+        
+        eprintln!("[DEBUG] UIRenderer::load_pdf called with: {:?}", pdf_path);
+        
+        // Load PDF page count - chonker7 style with fresh instance
+        eprintln!("[DEBUG] Getting page count...");
         self.total_pages = content_extractor::get_page_count(&pdf_path)?;
         self.current_page = 1;
+        eprintln!("[DEBUG] Page count: {}", self.total_pages);
         
         // Render first page image with larger dimensions for better visibility
+        eprintln!("[DEBUG] Rendering PDF page...");
         let image = pdf_renderer::render_pdf_page(&pdf_path, 0, 1200, 1600)?;
+        eprintln!("[DEBUG] PDF page rendered");
         
-        // Extract text to grid
-        let text_matrix = content_extractor::extract_to_matrix(&pdf_path, 0, 200, 100).await?;
+        // Use intelligent document-agnostic extraction
+        eprintln!("[DEBUG] Creating analyzer...");
+        let analyzer = DocumentAnalyzer::new()?;
+        eprintln!("[DEBUG] Analyzing page...");
+        let fingerprint = analyzer.analyze_page(&pdf_path, 0)?;
+        eprintln!("[DEBUG] Analysis complete: text={:.1}%, image={:.1}%, has_tables={}, text_quality={:.2}", 
+            fingerprint.text_coverage * 100.0, 
+            fingerprint.image_coverage * 100.0,
+            fingerprint.has_tables,
+            fingerprint.text_quality);
+        
+        // Use the intelligent ExtractionRouter to extract text
+        eprintln!("[DEBUG] Starting intelligent text extraction...");
+        let extraction_result = crate::pdf_extraction::ExtractionRouter::extract_with_fallback_sync(&pdf_path, 0, &fingerprint)?;
+        eprintln!("[DEBUG] Extraction complete using method: {:?}, quality: {:.2}", 
+            extraction_result.method, extraction_result.quality_score);
+        
+        let text = extraction_result.text;
+        
+        // Convert extracted text to grid format for display
+        let text_matrix = self.text_to_matrix(&text, 200, 100);
         
         // Update state
         self.current_pdf_path = Some(pdf_path);
         self.current_pdf_image = Some(image);
         self.pdf_content = text_matrix;
         
+        // Store fingerprint info for display
+        self.dark_mode = fingerprint.text_coverage > 0.8; // Just as a flag for now
+        
         Ok(())
+    }
+    
+    fn extract_text_simple(&self, pdf_path: &PathBuf, page: usize) -> Result<String> {
+        use std::process::Command;
+        
+        // Try pdftotext first (cleaner output)
+        let output = Command::new("pdftotext")
+            .args(&[
+                "-f", &(page + 1).to_string(),
+                "-l", &(page + 1).to_string(),
+                "-layout",
+                pdf_path.to_str().unwrap(),
+                "-"
+            ])
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+        }
+        
+        // Fallback to simple text
+        Ok("PDF text extraction in progress...".to_string())
+    }
+    
+    fn text_to_matrix(&self, text: &str, width: usize, height: usize) -> Vec<Vec<char>> {
+        let mut matrix = vec![vec![' '; width]; height];
+        let lines: Vec<&str> = text.lines().collect();
+        
+        for (y, line) in lines.iter().take(height).enumerate() {
+            for (x, ch) in line.chars().take(width).enumerate() {
+                matrix[y][x] = ch;
+            }
+        }
+        
+        matrix
     }
     
     pub fn get_current_pdf_path(&self) -> Option<&PathBuf> {
