@@ -6,3 +6,4 @@ pub mod pdf_renderer;
 pub mod viuer_display;
 pub mod content_extractor;
 pub mod ascii_display;
+pub mod kitty_protocol;

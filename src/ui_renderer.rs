@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use image::DynamicImage;
 use chonker8::integrated_file_picker::IntegratedFilePicker;
 use chonker8::{pdf_renderer, viuer_display, content_extractor, ascii_display};
+use chonker8::kitty_protocol::KittyProtocol;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -41,6 +42,8 @@ pub struct UIRenderer {
     debug_messages: Vec<String>,
     debug_scroll_offset: usize,
     debug_messages_loaded: bool,
+    kitty: KittyProtocol,
+    current_image_id: Option<u32>,
 }
 
 impl UIRenderer {
@@ -53,6 +56,15 @@ impl UIRenderer {
                 None
             }
         };
+        
+        let mut kitty = KittyProtocol::new();
+        
+        // Log Kitty support status
+        if kitty.is_supported() {
+            eprintln!("[DEBUG] Kitty graphics protocol detected and enabled");
+        } else {
+            eprintln!("[DEBUG] Kitty graphics protocol not detected, using fallback rendering");
+        }
         
         Self {
             config,
@@ -74,6 +86,8 @@ impl UIRenderer {
             debug_messages: Vec::new(),
             debug_scroll_offset: 0,
             debug_messages_loaded: false,
+            kitty,
+            current_image_id: None,
         }
     }
     
@@ -153,6 +167,7 @@ impl UIRenderer {
     }
     
     pub fn render(&mut self) -> Result<()> {
+        eprintln!("[DEBUG] Rendering screen: {:?}", self.current_screen);
         match self.current_screen {
             Screen::Demo => self.render_demo_screen(),
             Screen::FilePicker => self.render_file_picker_screen(),
@@ -170,7 +185,7 @@ impl UIRenderer {
         }
     }
     
-    fn render_demo_screen(&self) -> Result<()> {
+    fn render_demo_screen(&mut self) -> Result<()> {
         // Get terminal size first
         let (width, height) = terminal::size()?;
         
@@ -239,10 +254,12 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_pdf_screen(&self) -> Result<()> {
+    fn render_pdf_screen(&mut self) -> Result<()> {
+        eprintln!("[DEBUG] render_pdf_screen called");
         // Chonker7-style split view: PDF image on left, text extraction on right
         let (width, height) = terminal::size()?;
         let split_x = width / 2;
+        eprintln!("[DEBUG] Terminal size: {}x{}, split at {}", width, height, split_x);
         
         execute!(
             stdout(),
@@ -251,67 +268,44 @@ impl UIRenderer {
             Hide
         )?;
         
-        // Render PDF image on left side if available
-        if let Some(image) = &self.current_pdf_image {
-            // Show PDF debug info in TUI
-            execute!(
-                stdout(),
-                MoveTo(2, 2),
-                SetForegroundColor(Color::Green),
-                Print(&format!("PDF: {} pages | Image: {}x{}", 
-                    self.total_pages, image.width(), image.height())),
-                ResetColor
-            )?;
-            
-            // Try to display the PDF image
-            match viuer_display::display_pdf_image(
-                image, 0, 4, split_x - 1, height - 6, self.dark_mode
-            ) {
-                Ok(_) => {
-                    // Image displayed successfully
-                }
-                Err(_) => {
-                    // Fall back to ASCII display
-                    match ascii_display::display_pdf_as_ascii(
-                        image, 2, 6, split_x - 4, height - 10
-                    ) {
-                        Ok(_) => {
-                            execute!(
-                                stdout(),
-                                MoveTo(2, height - 4),
-                                SetForegroundColor(Color::Yellow),
-                                Print("ASCII mode (viuer failed)"),
-                                ResetColor
-                            )?;
-                        }
-                        Err(e) => {
-                            execute!(
-                                stdout(),
-                                MoveTo(2, 6),
-                                SetForegroundColor(Color::Red),
-                                Print(&format!("Display error: {}", e)),
-                                ResetColor
-                            )?;
-                        }
-                    }
-                }
-            }
-        } else {
-            // Show placeholder if no PDF loaded
-            execute!(
-                stdout(),
-                MoveTo(2, 4),
-                SetForegroundColor(Color::Yellow),
-                Print("📄 PDF - TEST Screen"),
-                MoveTo(2, 6),
-                SetForegroundColor(Color::White),
-                Print("No PDF loaded. Use file picker to select a PDF."),
-                MoveTo(2, 8),
-                SetForegroundColor(Color::Cyan),
-                Print("Press Tab to go to File Picker"),
-                ResetColor
-            )?;
+        // Draw a border around the PDF panel
+        let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
+        execute!(stdout(), SetForegroundColor(self.config.get_highlight_color()))?;
+        
+        // Top border
+        execute!(stdout(), MoveTo(0, 0), Print(tl))?;
+        for i in 1..split_x - 1 {
+            execute!(stdout(), MoveTo(i, 0), Print(h_line))?;
         }
+        execute!(stdout(), MoveTo(split_x - 1, 0), Print(tr))?;
+        
+        // Side borders
+        for i in 1..height - 2 {
+            execute!(stdout(), MoveTo(0, i), Print(v_line))?;
+            execute!(stdout(), MoveTo(split_x - 1, i), Print(v_line))?;
+        }
+        
+        // Bottom border
+        execute!(stdout(), MoveTo(0, height - 2), Print(bl))?;
+        for i in 1..split_x - 1 {
+            execute!(stdout(), MoveTo(i, height - 2), Print(h_line))?;
+        }
+        execute!(stdout(), MoveTo(split_x - 1, height - 2), Print(br))?;
+        
+        // Draw title
+        let title = format!(" PDF Page {}/{} ", self.current_page, self.total_pages);
+        execute!(
+            stdout(),
+            MoveTo(2, 0),
+            SetForegroundColor(self.config.get_highlight_color()),
+            Print(&title),
+            SetForegroundColor(self.config.get_text_color())
+        )?;
+        
+        // Use our new render_pdf_content method for Kitty protocol
+        eprintln!("[DEBUG] About to render PDF content at (1,1) size {}x{}", split_x - 2, height - 3);
+        self.render_pdf_content(1, 1, split_x - 2, height - 3)?;
+        eprintln!("[DEBUG] PDF content rendered");
         
         // Render text extraction on right side
         self.render_text_extraction_panel(split_x, 0, width - split_x, height - 2)?;
@@ -449,7 +443,7 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_split_mode(&self, width: u16, height: u16) -> Result<()> {
+    fn render_split_mode(&mut self, width: u16, height: u16) -> Result<()> {
         let split_pos = (width as f32 * self.config.panels.pdf.width_percent / 100.0) as u16;
         
         // Render left panel
@@ -477,7 +471,7 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_full_mode(&self, width: u16, height: u16) -> Result<()> {
+    fn render_full_mode(&mut self, width: u16, height: u16) -> Result<()> {
         // Full screen PDF view
         self.render_pdf_panel(0, 0, width, height - 2)?;
         Ok(())
@@ -489,7 +483,7 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_pdf_panel(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+    fn render_pdf_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
         
         // Draw border if not "none"
@@ -633,7 +627,70 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_pdf_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+    fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+        // Try to use Kitty protocol if supported and we have an image
+        if self.kitty.is_supported() && self.current_pdf_image.is_some() {
+            // Clear any previous image
+            if let Some(image_id) = self.current_image_id {
+                let _ = self.kitty.clear_image(image_id);
+            }
+            
+            // Display the PDF image using Kitty protocol
+            if let Some(ref image) = self.current_pdf_image {
+                // Calculate display dimensions to fit the panel
+                let (img_width, img_height) = (image.width(), image.height());
+                
+                // Debug: Log image info
+                eprintln!("[DEBUG] PDF image size: {}x{}", img_width, img_height);
+                eprintln!("[DEBUG] Panel size: {}x{}", width, height);
+                eprintln!("[DEBUG] Display position: ({}, {})", x, y);
+                
+                // Calculate scale to fit panel - convert to cell dimensions
+                // Each character cell is roughly 7x14 pixels in most terminals
+                let cell_width = 7;
+                let cell_height = 14;
+                
+                // Target size in pixels based on character cells
+                let target_width_px = (width as u32) * cell_width;
+                let target_height_px = (height as u32) * cell_height;
+                
+                let scale_x = target_width_px as f32 / img_width as f32;
+                let scale_y = target_height_px as f32 / img_height as f32;
+                let scale = scale_x.min(scale_y) * 0.9; // 90% to leave margin
+                
+                let display_width = (img_width as f32 * scale) as u32;
+                let display_height = (img_height as f32 * scale) as u32;
+                
+                eprintln!("[DEBUG] Display size: {}x{}", display_width, display_height);
+                
+                // Display the image
+                match self.kitty.display_image(
+                    image,
+                    x as u32,
+                    y as u32,
+                    Some(display_width),
+                    Some(display_height),
+                ) {
+                    Ok(image_id) => {
+                        self.current_image_id = Some(image_id);
+                        eprintln!("[DEBUG] Successfully displayed image with ID: {}", image_id);
+                    }
+                    Err(e) => {
+                        eprintln!("[DEBUG] Failed to display image via Kitty: {}", e);
+                        // Fall back to text rendering
+                        self.render_pdf_content_fallback(x, y, width, height)?;
+                    }
+                }
+            }
+        } else {
+            // Fallback to text rendering when Kitty is not available
+            self.render_pdf_content_fallback(x, y, width, height)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn render_pdf_content_fallback(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
         
         // Generate page-specific content

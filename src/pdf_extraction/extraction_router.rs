@@ -1,16 +1,21 @@
+// Simplified PDF text extraction using pdftotext
+//
+// This module has been simplified to use only the pdftotext utility for all PDF text extraction.
+// Previous implementations using PDFium, OCR (TrOCR), and LayoutLM have been removed.
+// 
+// The pdftotext utility is called with the -layout flag to preserve formatting:
+// pdftotext -f [page] -l [page] -layout [pdf_path] -
+//
+// This provides reliable text extraction that works well for most PDFs.
+
 use anyhow::Result;
 use std::path::Path;
 use super::document_analyzer::PageFingerprint;
-use image::DynamicImage;
-use chrono;
 
-/// Extraction methods available
+/// Extraction method enum - now only contains PdfToText
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExtractionMethod {
-    NativeText,      // PDFium native text extraction
-    FastText,        // pdftotext for layout preservation
-    OCR,            // TrOCR for scanned documents
-    LayoutAnalysis, // LayoutLM for complex layouts
+    PdfToText,  // Only pdftotext for all extraction
 }
 
 /// Extraction result with quality metrics
@@ -34,324 +39,103 @@ impl ExtractionResult {
     }
 }
 
-/// Router for determining extraction strategy
+/// Router for determining extraction strategy - simplified
 pub struct ExtractionRouter;
 
 impl ExtractionRouter {
-    /// Helper to log to debug file
-    fn log_to_debug_file(message: &str) {
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/chonker8_debug.log")
-        {
-            use std::io::Write;
-            use chrono::Local;
-            let _ = writeln!(file, "[{}] [EXTRACTION] {}", 
-                Local::now().format("%H:%M:%S%.3f"), 
-                message);
-        }
-    }
-    /// Determine extraction strategy based on page fingerprint
-    pub fn determine_strategy(fingerprint: &PageFingerprint) -> ExtractionMethod {
-        // Decision tree based on content analysis
-        match (fingerprint.text_coverage, fingerprint.image_coverage) {
-            // High text coverage, low image coverage -> Native text extraction
-            (t, i) if t > 0.8 && i < 0.2 => ExtractionMethod::NativeText,
-            
-            // Low text coverage, high image coverage -> OCR
-            (t, i) if t < 0.1 && i > 0.8 => ExtractionMethod::OCR,
-            
-            // Has tables -> Layout analysis
-            _ if fingerprint.has_tables => ExtractionMethod::LayoutAnalysis,
-            
-            // Moderate text coverage -> Fast text extraction
-            (t, _) if t > 0.5 => ExtractionMethod::FastText,
-            
-            // Poor text quality -> Re-OCR
-            _ if fingerprint.text_quality < 0.5 => ExtractionMethod::OCR,
-            
-            // Default fallback
-            _ => ExtractionMethod::NativeText,
-        }
+    /// Determine extraction strategy - always returns PdfToText
+    pub fn determine_strategy(_fingerprint: &PageFingerprint) -> ExtractionMethod {
+        ExtractionMethod::PdfToText
     }
     
-    /// Get fallback chain for extraction methods
-    pub fn get_fallback_chain(primary: &ExtractionMethod) -> Vec<ExtractionMethod> {
-        match primary {
-            ExtractionMethod::NativeText => vec![
-                ExtractionMethod::FastText,
-                ExtractionMethod::OCR,
-            ],
-            ExtractionMethod::FastText => vec![
-                ExtractionMethod::NativeText,
-                ExtractionMethod::OCR,
-            ],
-            ExtractionMethod::OCR => vec![
-                ExtractionMethod::LayoutAnalysis,
-                ExtractionMethod::NativeText,
-            ],
-            ExtractionMethod::LayoutAnalysis => vec![
-                ExtractionMethod::OCR,
-                ExtractionMethod::FastText,
-                ExtractionMethod::NativeText,
-            ],
-        }
+    /// Get fallback chain - not needed anymore since we only have one method
+    pub fn get_fallback_chain(_primary: &ExtractionMethod) -> Vec<ExtractionMethod> {
+        vec![]
     }
     
-    /// Execute extraction with fallback chain (synchronous version for UI)
+    /// Execute extraction with pdftotext (synchronous version for UI)
     pub fn extract_with_fallback_sync(
         pdf_path: &Path,
         page_index: usize,
-        fingerprint: &PageFingerprint,
+        _fingerprint: &PageFingerprint,
     ) -> Result<ExtractionResult> {
-        let primary_method = Self::determine_strategy(fingerprint);
-        eprintln!("[DEBUG] Primary extraction method selected: {:?}", primary_method);
-        Self::log_to_debug_file(&format!("Primary extraction method selected: {:?}", primary_method));
-        
-        // Try primary method
-        if let Ok(result) = Self::execute_extraction_sync(pdf_path, page_index, &primary_method) {
-            eprintln!("[DEBUG] Quality score: {:.2}", result.quality_score);
-            Self::log_to_debug_file(&format!("Quality score: {:.2}", result.quality_score));
-            if result.quality_score >= 0.7 {
-                eprintln!("[DEBUG] Using primary method: {:?}", primary_method);
-                Self::log_to_debug_file(&format!("Using primary method: {:?}", primary_method));
-                return Ok(result);
-            }
-        }
-        
-        // Try fallback chain
-        let fallbacks = Self::get_fallback_chain(&primary_method);
-        for fallback_method in fallbacks {
-            eprintln!("[DEBUG] Trying fallback method: {:?}", fallback_method);
-            Self::log_to_debug_file(&format!("Trying fallback method: {:?}", fallback_method));
-            if let Ok(result) = Self::execute_extraction_sync(pdf_path, page_index, &fallback_method) {
-                if result.quality_score >= 0.5 {
-                    eprintln!("[DEBUG] Using fallback method: {:?}", fallback_method);
-                    Self::log_to_debug_file(&format!("Using fallback method: {:?}", fallback_method));
-                    return Ok(result);
-                }
-            }
-        }
-        
-        // Last resort - just use pdftotext
-        eprintln!("[DEBUG] Using last resort: pdftotext");
-        Self::log_to_debug_file("Using last resort: pdftotext");
-        Self::execute_extraction_sync(pdf_path, page_index, &ExtractionMethod::FastText)
+        Self::execute_extraction_sync(pdf_path, page_index, &ExtractionMethod::PdfToText)
     }
     
-    /// Execute extraction with fallback chain (async version)
+    /// Execute extraction with pdftotext (async version)
     pub async fn extract_with_fallback(
         pdf_path: &Path,
         page_index: usize,
-        fingerprint: &PageFingerprint,
+        _fingerprint: &PageFingerprint,
     ) -> Result<ExtractionResult> {
-        let primary_method = Self::determine_strategy(fingerprint);
-        
-        // Try primary method
-        if let Ok(result) = Self::execute_extraction(pdf_path, page_index, &primary_method).await {
-            if result.quality_score >= 0.7 {
-                return Ok(result);
-            }
-        }
-        
-        // Try fallback chain
-        let fallback_chain = Self::get_fallback_chain(&primary_method);
-        for method in fallback_chain {
-            if let Ok(result) = Self::execute_extraction(pdf_path, page_index, &method).await {
-                if result.quality_score >= 0.5 {
-                    return Ok(result);
-                }
-            }
-        }
-        
-        // Last resort: return best quality result
-        Self::execute_extraction(pdf_path, page_index, &ExtractionMethod::NativeText).await
+        Self::execute_extraction(pdf_path, page_index, &ExtractionMethod::PdfToText).await
     }
     
-    /// Execute extraction with specific method (synchronous)
+    /// Execute extraction with pdftotext (synchronous)
     fn execute_extraction_sync(
         pdf_path: &Path,
         page_index: usize,
-        method: &ExtractionMethod,
+        _method: &ExtractionMethod,
     ) -> Result<ExtractionResult> {
         use std::time::Instant;
         use std::process::Command;
         let start = Instant::now();
         
-        let text = match method {
-            ExtractionMethod::NativeText => {
-                // Use Pdfium with fresh instance (chonker7 style)
-                crate::pdf_extraction::basic::extract_with_pdfium_sync(pdf_path, page_index)?
-            }
-            ExtractionMethod::FastText => {
-                // Use pdftotext command directly
-                let output = Command::new("pdftotext")
-                    .args(&[
-                        "-f", &(page_index + 1).to_string(),
-                        "-l", &(page_index + 1).to_string(),
-                        "-layout",
-                        pdf_path.to_str().unwrap(),
-                        "-"
-                    ])
-                    .output()?;
-                    
-                if output.status.success() {
-                    String::from_utf8_lossy(&output.stdout).to_string()
-                } else {
-                    anyhow::bail!("pdftotext failed");
-                }
-            }
-            ExtractionMethod::OCR => {
-                // Try to use TrOCR model for OCR
-                eprintln!("[DEBUG] Attempting TrOCR extraction...");
-                Self::log_to_debug_file("Attempting TrOCR extraction...");
-                
-                // First render the page to an image
-                // We need to use pdfium directly here since we're in the pdf_extraction module
-                match render_page_to_image(pdf_path, page_index) {
-                    Ok(image) => {
-                        // Convert image to bytes for TrOCR
-                        let mut buffer = Vec::new();
-                        image.write_to(&mut std::io::Cursor::new(&mut buffer), image::ImageFormat::Png)
-                            .map_err(|e| anyhow::anyhow!("Failed to encode image: {}", e))?;
-                        
-                        // Try to use TrOCR
-                        match crate::pdf_extraction::trocr_extraction::extract_with_simple_trocr_sync(&buffer) {
-                            Ok(text) => {
-                                eprintln!("[DEBUG] TrOCR extraction successful");
-                                Self::log_to_debug_file("TrOCR extraction successful");
-                                text
-                            }
-                            Err(e) => {
-                                eprintln!("[DEBUG] TrOCR failed: {}, falling back to pdftotext", e);
-                                Self::log_to_debug_file(&format!("TrOCR failed: {}, falling back to pdftotext", e));
-                                let output = Command::new("pdftotext")
-                                    .args(&[
-                                        "-f", &(page_index + 1).to_string(),
-                                        "-l", &(page_index + 1).to_string(),
-                                        pdf_path.to_str().unwrap(),
-                                        "-"
-                                    ])
-                                    .output()?;
-                                String::from_utf8_lossy(&output.stdout).to_string()
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("[DEBUG] Failed to render PDF page: {}, using pdftotext", e);
-                        Self::log_to_debug_file(&format!("Failed to render PDF page: {}, using pdftotext", e));
-                        let output = Command::new("pdftotext")
-                            .args(&[
-                                "-f", &(page_index + 1).to_string(),
-                                "-l", &(page_index + 1).to_string(),
-                                pdf_path.to_str().unwrap(),
-                                "-"
-                            ])
-                            .output()?;
-                        String::from_utf8_lossy(&output.stdout).to_string()
-                    }
-                }
-            }
-            ExtractionMethod::LayoutAnalysis => {
-                // Try to use LayoutLMv3 for structured extraction
-                eprintln!("[DEBUG] Attempting LayoutLM extraction...");
-                Self::log_to_debug_file("Attempting LayoutLM extraction...");
-                
-                match crate::pdf_extraction::layoutlm_extraction::extract_with_layoutlm_sync(pdf_path, page_index) {
-                    Ok(text) => {
-                        eprintln!("[DEBUG] LayoutLM extraction successful");
-                        Self::log_to_debug_file("LayoutLM extraction successful");
-                        text
-                    }
-                    Err(e) => {
-                        eprintln!("[DEBUG] LayoutLM failed: {}, falling back to pdftotext with layout", e);
-                        Self::log_to_debug_file(&format!("LayoutLM failed: {}, falling back to pdftotext with layout", e));
-                        let output = Command::new("pdftotext")
-                            .args(&[
-                                "-f", &(page_index + 1).to_string(),
-                                "-l", &(page_index + 1).to_string(),
-                                "-layout",
-                                "-table",
-                                pdf_path.to_str().unwrap(),
-                                "-"
-                            ])
-                            .output()?;
-                        String::from_utf8_lossy(&output.stdout).to_string()
-                    }
-                }
-            }
+        // Always use pdftotext command
+        let output = Command::new("pdftotext")
+            .args(&[
+                "-f", &(page_index + 1).to_string(),
+                "-l", &(page_index + 1).to_string(),
+                "-layout",
+                pdf_path.to_str().unwrap(),
+                "-"
+            ])
+            .output()?;
+            
+        let text = if output.status.success() {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        } else {
+            anyhow::bail!("pdftotext failed");
         };
         
-        let mut result = ExtractionResult::new(text, method.clone());
+        let mut result = ExtractionResult::new(text, ExtractionMethod::PdfToText);
         result.extraction_time_ms = start.elapsed().as_millis() as u64;
-        eprintln!("[DEBUG] Extraction took {}ms", result.extraction_time_ms);
-        Self::log_to_debug_file(&format!("Extraction took {}ms", result.extraction_time_ms));
         
         Ok(result)
     }
     
-    /// Execute extraction with specific method (async)
+    /// Execute extraction with pdftotext (async)
     async fn execute_extraction(
         pdf_path: &Path,
         page_index: usize,
-        method: &ExtractionMethod,
+        _method: &ExtractionMethod,
     ) -> Result<ExtractionResult> {
         use std::time::Instant;
+        use std::process::Command;
         let start = Instant::now();
         
-        let text = match method {
-            ExtractionMethod::NativeText => {
-                crate::pdf_extraction::basic::extract_with_pdfium(pdf_path, page_index).await?
-            }
-            ExtractionMethod::FastText => {
-                let matrix = crate::pdf_extraction::pdftotext_extraction::extract_with_pdftotext(
-                    pdf_path,
-                    page_index,
-                    80,
-                    40,
-                ).await?;
-                // Convert matrix to string
-                matrix.iter()
-                    .map(|row| row.iter().collect::<String>())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
-            ExtractionMethod::OCR => {
-                // For now, fallback to native - OCR integration would go here
-                crate::pdf_extraction::basic::extract_with_pdfium(pdf_path, page_index).await?
-            }
-            ExtractionMethod::LayoutAnalysis => {
-                // For now, fallback to native - LayoutLM integration would go here
-                crate::pdf_extraction::basic::extract_with_pdfium(pdf_path, page_index).await?
-            }
+        // Always use pdftotext command
+        let output = Command::new("pdftotext")
+            .args(&[
+                "-f", &(page_index + 1).to_string(),
+                "-l", &(page_index + 1).to_string(),
+                "-layout",
+                pdf_path.to_str().unwrap(),
+                "-"
+            ])
+            .output()?;
+            
+        let text = if output.status.success() {
+            String::from_utf8_lossy(&output.stdout).to_string()
+        } else {
+            anyhow::bail!("pdftotext failed");
         };
         
-        let mut result = ExtractionResult::new(text, method.clone());
+        let mut result = ExtractionResult::new(text, ExtractionMethod::PdfToText);
         result.extraction_time_ms = start.elapsed().as_millis() as u64;
         
         Ok(result)
     }
-}
-
-// Helper function to render a PDF page to an image
-fn render_page_to_image(pdf_path: &Path, page_index: usize) -> Result<DynamicImage> {
-    use super::pdfium_singleton::with_pdfium;
-    use pdfium_render::prelude::*;
-    
-    with_pdfium(|pdfium| {
-        let document = pdfium.load_pdf_from_file(pdf_path, None)?;
-        let page = document.pages().get(page_index as u16)?;
-        
-        // Render at a reasonable resolution
-        let bitmap = page.render_with_config(
-            &PdfRenderConfig::new()
-                .set_target_size(1200, 1600)
-                .rotate_if_landscape(PdfPageRenderRotation::None, false)
-        )?;
-        
-        Ok(bitmap.as_image())
-    })
 }
 
 /// Calculate quality score for extracted text
@@ -418,34 +202,6 @@ fn has_reasonable_whitespace(text: &str) -> bool {
     whitespace_ratio > 0.05 && whitespace_ratio < 0.5
 }
 
-// Add helper for basic PDFium extraction
-mod basic {
-    use anyhow::Result;
-    use pdfium_render::prelude::*;
-    use std::path::Path;
-    
-    pub async fn extract_with_pdfium(pdf_path: &Path, page_index: usize) -> Result<String> {
-        let lib_path = if cfg!(target_os = "macos") {
-            "./lib/libpdfium.dylib"
-        } else {
-            "./lib/libpdfium.so"
-        };
-        
-        let pdfium = Pdfium::new(
-            Pdfium::bind_to_library(lib_path)
-                .or_else(|_| Pdfium::bind_to_system_library())?
-        );
-        
-        let document = pdfium.load_pdf_from_file(pdf_path, None)?;
-        let page = document.pages().get(page_index as u16)?;
-        let text = page.text()?.all();
-        
-        Ok(text)
-    }
-}
-
-// Re-export for use in main
-pub use basic::extract_with_pdfium;
 
 #[cfg(test)]
 mod tests {
@@ -460,20 +216,9 @@ mod tests {
     
     #[test]
     fn test_strategy_selection() {
-        let mut fingerprint = PageFingerprint::new();
+        let fingerprint = PageFingerprint::new();
         
-        // High text coverage
-        fingerprint.text_coverage = 0.9;
-        fingerprint.image_coverage = 0.1;
-        assert_eq!(ExtractionRouter::determine_strategy(&fingerprint), ExtractionMethod::NativeText);
-        
-        // High image coverage
-        fingerprint.text_coverage = 0.05;
-        fingerprint.image_coverage = 0.9;
-        assert_eq!(ExtractionRouter::determine_strategy(&fingerprint), ExtractionMethod::OCR);
-        
-        // Has tables
-        fingerprint.has_tables = true;
-        assert_eq!(ExtractionRouter::determine_strategy(&fingerprint), ExtractionMethod::LayoutAnalysis);
+        // Always returns PdfToText now
+        assert_eq!(ExtractionRouter::determine_strategy(&fingerprint), ExtractionMethod::PdfToText);
     }
 }

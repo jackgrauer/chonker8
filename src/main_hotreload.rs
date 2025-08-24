@@ -79,6 +79,9 @@ impl App {
             match self.renderer.load_pdf(pdf_path) {
                 Ok(()) => {
                     eprintln!("[DEBUG] PDF loaded successfully: {}", path);
+                    // Switch to PDF viewer screen when loading from command line
+                    self.renderer.set_screen(Screen::PdfViewer);
+                    self.needs_redraw = true;
                 }
                 Err(e) => {
                     eprintln!("[DEBUG] Failed to load PDF: {}", e);
@@ -100,6 +103,12 @@ impl App {
         
         // Initial render
         self.renderer.render()?;
+        
+        // If PDF was loaded before run, render again with correct screen
+        if self.needs_redraw {
+            self.renderer.render()?;
+            self.needs_redraw = false;
+        }
         
         // Main loop
         while self.running {

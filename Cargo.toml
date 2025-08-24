@@ -37,6 +37,7 @@ chrono = "0.4"
 # PDF display
 viuer = "0.7"
 image_0_24 = { package = "image", version = "0.24" }
+base64 = "0.22"
 
 [dev-dependencies]
 rexpect = "0.5"

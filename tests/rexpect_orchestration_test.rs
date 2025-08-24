@@ -142,8 +142,8 @@ fn test_performance_benchmark() -> Result<()> {
     
     println!("Running performance benchmark...");
     
-    // Test different extraction methods and measure time
-    let methods = ["NativeText", "FastText"];
+    // Test extraction method and measure time
+    let methods = ["PdfToText"];
     
     for method in &methods {
         println!("Testing method: {}", method);

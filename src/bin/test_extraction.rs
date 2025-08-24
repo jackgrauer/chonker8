@@ -162,8 +162,17 @@ async fn run_full_pipeline(pdf_path: &PathBuf) -> Result<()> {
     
     let analyzer = DocumentAnalyzer::new()?;
     
-    // Get page count
-    let page_count = chonker8::pdf_extraction::basic::get_page_count(pdf_path)?;
+    // Get page count using pdfinfo
+    use std::process::Command;
+    let output = Command::new("pdfinfo")
+        .arg(pdf_path)
+        .output()?;
+    let info = String::from_utf8_lossy(&output.stdout);
+    let page_count = info.lines()
+        .find(|line| line.starts_with("Pages:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1);
     println!("Document has {} pages", page_count);
     
     // Analyze all pages
@@ -207,29 +216,24 @@ async fn try_extraction_method(
     method: &ExtractionMethod,
 ) -> Result<ExtractionResult> {
     use std::time::Instant;
+    use std::process::Command;
     let start = Instant::now();
     
-    let text = match method {
-        ExtractionMethod::NativeText => {
-            chonker8::pdf_extraction::basic::extract_with_pdfium(pdf_path, page).await?
-        }
-        ExtractionMethod::FastText => {
-            let matrix = chonker8::pdf_extraction::pdftotext_extraction::extract_with_pdftotext(
-                pdf_path,
-                page,
-                80,
-                40,
-            ).await?;
-            // Convert matrix to string
-            matrix.iter()
-                .map(|row| row.iter().collect::<String>())
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-        ExtractionMethod::OCR | ExtractionMethod::LayoutAnalysis => {
-            // For now, fallback to native
-            chonker8::pdf_extraction::basic::extract_with_pdfium(pdf_path, page).await?
-        }
+    // Always use pdftotext since we only have PdfToText now
+    let output = Command::new("pdftotext")
+        .args(&[
+            "-f", &(page + 1).to_string(),
+            "-l", &(page + 1).to_string(),
+            "-layout",
+            pdf_path.to_str().unwrap(),
+            "-"
+        ])
+        .output()?;
+        
+    let text = if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    } else {
+        anyhow::bail!("pdftotext failed");
     };
     
     let mut result = ExtractionResult::new(text, method.clone());
