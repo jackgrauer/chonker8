@@ -1,64 +1,28 @@
 use anyhow::Result;
 use image::DynamicImage;
-use pdfium_render::prelude::*;
 use std::path::Path;
 
-/// Get a PDFium instance for use across the application
-pub fn get_pdfium_instance() -> Pdfium {
-    Pdfium::new(
-        Pdfium::bind_to_library(
-            Pdfium::pdfium_platform_library_name_at_path("./lib/")
-        ).expect("Failed to bind to PDFium library")
-    )
-}
+// Use our Vello renderer instead of PDFium
+use crate::vello_pdf_renderer::VelloPdfRenderer;
 
-/// Render a PDF page to an image - chonker7 style (new instance each time)
+/// Render a PDF page to an image using Vello (GPU-accelerated on ARM/Metal)
 pub fn render_pdf_page(pdf_path: &Path, page_num: usize, width: u32, height: u32) -> Result<DynamicImage> {
-    // Create a fresh PDFium instance for this operation (chonker7 style)
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(
-            Pdfium::pdfium_platform_library_name_at_path("./lib/")
-        )?
-    );
+    // Render PDF page using Vello
+    // Create a Vello renderer instance
+    let mut renderer = VelloPdfRenderer::new(pdf_path)?;
     
-    // Load the PDF document
-    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
-    
-    // Get the requested page (pages are 0-indexed)
-    let pages = document.pages();
-    let page = pages.get(page_num as u16)?;
-    
-    // Calculate scale to fit within the specified dimensions
-    let page_width = page.width();
-    let page_height = page.height();
-    
-    let scale_x = width as f32 / page_width.value;
-    let scale_y = height as f32 / page_height.value;
-    let scale = scale_x.min(scale_y);
-    
-    // Render the page to a bitmap with better settings
-    let bitmap = page.render_with_config(
-        &PdfRenderConfig::new()
-            .set_target_size(
-                (page_width.value * scale) as i32,
-                (page_height.value * scale) as i32
-            )
-            .rotate_if_landscape(PdfPageRenderRotation::None, false)
-    )?;
-    
-    // Convert to DynamicImage
-    let image = bitmap.as_image();
-    Ok(image)
+    // Render the requested page
+    renderer.render_page(page_num, width, height)
 }
 
-/// Get the total number of pages in a PDF - chonker7 style (new instance each time)
+/// Get the total number of pages in a PDF using Vello renderer
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<usize> {
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(
-            Pdfium::pdfium_platform_library_name_at_path("./lib/")
-        )?
-    );
-    
-    let document = pdfium.load_pdf_from_file(pdf_path, None)?;
-    Ok(document.pages().len() as usize)
+    let renderer = VelloPdfRenderer::new(pdf_path)?;
+    Ok(renderer.page_count())
+}
+
+/// Legacy PDFium compatibility function (deprecated)
+/// This is kept for backward compatibility but will panic if called
+pub fn get_pdfium_instance() -> ! {
+    panic!("PDFium has been replaced with Vello renderer. Update your code to use the new API.");
 }

@@ -16,15 +16,31 @@ thiserror = "1.0"
 notify = "6.1"
 crossterm = "0.27"
 toml = "0.8"
+atty = "0.2"
 
 # PDF extraction - JUST THE ESSENTIALS
 tokenizers = { version = "0.19", features = ["onig"] }
 ort = { version = "2.0.0-rc.10", features = ["coreml"] }
 ndarray = "0.15"
 image = "0.25"
-pdfium-render = { version = "0.8", features = ["thread_safe"] }
+# pdfium-render removed - replaced with Vello renderer
 tempfile = "3.8"
 regex = "1.10"
+
+# Pure Rust PDF rendering
+lopdf = "0.33"
+# Vello - GPU-accelerated 2D rendering (works great on ARM/Metal)
+vello = "0.3"
+vello_encoding = "0.3"
+kurbo = "0.11"  # Geometry primitives used by Vello
+peniko = "0.2"  # Color and brush types for Vello
+# For actual GPU rendering with Vello
+pollster = "0.3"  # Simple async runtime for wgpu
+# Font parsing and text rendering
+ttf-parser = "0.24"
+rusttype = "0.9"  # For font metrics and glyph rendering
+# Fallback CPU renderer
+tiny-skia = "0.11"
 
 # Storage - Simple SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -33,6 +49,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 nucleo = "0.5"
 dirs = "5.0"
 chrono = "0.4"
+once_cell = "1.19"
 
 # PDF display
 viuer = "0.7"
