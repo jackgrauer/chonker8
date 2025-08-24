@@ -5,8 +5,10 @@ mod pdf_extraction;
 mod config;
 mod hot_reload_manager;
 mod build_system;
+mod output_capture;
 
 use anyhow::Result;
+use clap::Parser;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
@@ -25,6 +27,19 @@ use ui_renderer::{UIRenderer, Screen};
 use hot_reload_manager::HotReloadManager;
 use std::process::{Command, Stdio};
 // use chonker8::integrated_file_picker::IntegratedFilePicker; // Unused import
+
+#[derive(Parser, Debug)]
+#[command(name = "chonker8-hot")]
+#[command(version = "8.8.0")]
+#[command(about = "A/B PDF comparison viewer - Visual quality assessment tool", long_about = None)]
+struct Args {
+    /// PDF file to display for A/B comparison (left: rendered PDF, right: pdftotext extraction)
+    pdf_file: Option<PathBuf>,
+    
+    /// Test Kitty graphics protocol detection
+    #[arg(long)]
+    test_kitty: bool,
+}
 
 struct App {
     config: UIConfig,
@@ -66,29 +81,36 @@ impl App {
     }
     
     fn load_pdf(&mut self, path: &str) -> Result<()> {
-        eprintln!("[DEBUG] load_pdf called with: {}", path);
+        capture_debug!("load_pdf called with: {}", path);
+        eprintln!("[DEBUG] Command line loading PDF: {}", path);
         self.pdf_path = Some(path.to_string());
         
         // Load PDF synchronously to avoid runtime issues
         let pdf_path = PathBuf::from(path);
-        eprintln!("[DEBUG] Checking if path exists: {}", pdf_path.exists());
+        capture_debug!("Checking if path exists: {}", pdf_path.exists());
+        eprintln!("[DEBUG] PDF path exists: {}", pdf_path.exists());
+        eprintln!("[DEBUG] Full path: {:?}", pdf_path);
         
         if pdf_path.exists() {
+            capture_debug!("Path exists, calling renderer.load_pdf");
             eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
             // Load synchronously without async runtime
             match self.renderer.load_pdf(pdf_path) {
                 Ok(()) => {
-                    eprintln!("[DEBUG] PDF loaded successfully: {}", path);
+                    eprintln!("[DEBUG] ✅ PDF loaded successfully: {}", path);
                     // Switch to PDF viewer screen when loading from command line
                     self.renderer.set_screen(Screen::PdfViewer);
                     self.needs_redraw = true;
+                    eprintln!("[DEBUG] Switched to PDF viewer screen");
                 }
                 Err(e) => {
-                    eprintln!("[DEBUG] Failed to load PDF: {}", e);
+                    eprintln!("[ERROR] ❌ Failed to load PDF: {}", e);
+                    return Err(e);
                 }
             }
         } else {
-            eprintln!("[DEBUG] Path does not exist!");
+            eprintln!("[ERROR] ❌ PDF file does not exist: {}", path);
+            return Err(anyhow::anyhow!("PDF file not found: {}", path));
         }
         
         self.needs_redraw = true;
@@ -97,17 +119,27 @@ impl App {
     }
     
     fn run(&mut self) -> Result<()> {
-        // Setup terminal
-        terminal::enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
+        // Setup terminal - make it resilient to non-TTY environments
+        let is_tty = atty::is(atty::Stream::Stdout);
+        
+        if is_tty {
+            terminal::enable_raw_mode()?;
+            execute!(stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
+        } else {
+            eprintln!("[DEBUG] Not a TTY, skipping terminal setup");
+        }
         
         // Initial render
+        eprintln!("[DEBUG] Initial render call");
         self.renderer.render()?;
         
         // If PDF was loaded before run, render again with correct screen
         if self.needs_redraw {
+            eprintln!("[DEBUG] needs_redraw=true, rendering again");
             self.renderer.render()?;
             self.needs_redraw = false;
+        } else {
+            eprintln!("[DEBUG] needs_redraw=false, no second render");
         }
         
         // Main loop
@@ -350,7 +382,6 @@ impl App {
     fn call_pdf_processor(&self, pdf_path: &str, page: usize) -> Result<Vec<Vec<char>>> {
         // Call the external PDF processor binary
         let output = Command::new("./target/release/pdf-processor")
-            .env("DYLD_LIBRARY_PATH", "./lib")
             .args(&["process", pdf_path, &page.to_string()])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -411,19 +442,40 @@ impl App {
 }
 
 fn main() -> Result<()> {
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
+    // Initialize output capture system for rexpect testing
+    output_capture::initialize_output_capture();
+    
+    // Parse command line arguments using clap
+    let args = Args::parse();
+    
+    // Handle test mode
+    if args.test_kitty {
+        capture_info!("Testing Kitty graphics protocol...");
+        if std::env::var("KITTY_WINDOW_ID").is_ok() {
+            capture_info!("✅ Kitty graphics protocol detected");
+            capture_info!("  KITTY_WINDOW_ID={}", std::env::var("KITTY_WINDOW_ID").unwrap());
+        } else {
+            capture_warning!("❌ Kitty graphics protocol not detected");
+            capture_warning!("  Run this in a Kitty terminal for graphics support");
+        }
+        return Ok(());
+    }
     
     // Create app
     let mut app = App::new()?;
     
     // Load PDF if provided
-    if args.len() > 1 {
-        app.load_pdf(&args[1])?;
+    if let Some(pdf_path) = args.pdf_file {
+        eprintln!("[INFO] A/B Comparison Mode:");
+        eprintln!("[INFO] Left pane: lopdf-vello-kitty rendering");
+        eprintln!("[INFO] Right pane: pdftotext extraction");
+        app.load_pdf(&pdf_path.to_string_lossy())?;
     } else {
-        // Load a test PDF or show help
-        println!("Usage: chonker8 [pdf_file]");
-        println!("Starting in demo mode...");
+        // Show usage
+        println!("Usage: chonker8-hot [pdf_file]");
+        println!("       chonker8-hot --help");
+        println!("       chonker8-hot --test-kitty");
+        println!("\nStarting in demo mode...");
         
         // Create demo content for page 1
         let mut demo_content = vec![vec![' '; 80]; 24];

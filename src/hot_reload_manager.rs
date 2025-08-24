@@ -12,6 +12,30 @@ use std::{
     os::unix::process::CommandExt,
 };
 
+/// Strip ANSI escape codes from string to prevent ribbon output
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip the escape sequence
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Skip until we find a letter (end of sequence)
+                while let Some(ch) = chars.next() {
+                    if ch.is_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 pub struct HotReloadManager {
     watcher: RecommendedWatcher,
     file_rx: Receiver<notify::Result<Event>>,
@@ -154,18 +178,19 @@ impl HotReloadManager {
                     request.target);
             }
             
-            // Simple build execution - capture output to prevent screen corruption
-            // Don't use --quiet so we can see warnings
+            // Build with clean output - no ANSI codes or ribboning
             let build_result = Command::new("cargo")
-                .env("DYLD_LIBRARY_PATH", "./lib")
+                .env("CARGO_TERM_COLOR", "never")  // Disable color output
+                .env("RUSTFLAGS", "--error-format=short")  // Simple error format
                 .args(&["build", "--release", "--bin", &request.target])
                 .output();
             
             let (success, stderr_output, stdout_output) = match build_result {
                 Ok(output) => {
                     let success = output.status.success();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    // Strip ANSI codes to prevent ribbon output
+                    let stderr = strip_ansi_codes(&String::from_utf8_lossy(&output.stderr));
+                    let stdout = strip_ansi_codes(&String::from_utf8_lossy(&output.stdout));
                     (success, stderr, stdout)
                 }
                 Err(e) => {
@@ -247,9 +272,17 @@ impl HotReloadManager {
         let args: Vec<String> = env::args().collect();
         let binary_path = &args[0];
         
-        // Re-exec with same args
+        // Re-exec with same args AND preserve Kitty environment
         let mut cmd = Command::new("./target/release/chonker8-hot");
-        cmd.env("DYLD_LIBRARY_PATH", "./lib");
+        
+        // Preserve Kitty environment for perfect hot-reload
+        if let Ok(kitty_id) = env::var("KITTY_WINDOW_ID") {
+            cmd.env("KITTY_WINDOW_ID", kitty_id);
+            eprintln!("✅ Preserving Kitty graphics context");
+        }
+        if let Ok(term) = env::var("TERM") {
+            cmd.env("TERM", term);
+        }
         
         // Add original args (skip first arg which is the binary name)
         if args.len() > 1 {

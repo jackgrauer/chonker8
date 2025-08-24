@@ -237,11 +237,9 @@ impl VelloPdfRenderer {
         eprintln!("[VELLO] Content preview: {}", 
             String::from_utf8_lossy(&content[..content.len().min(200)]).replace('\n', "\\n"));
         
-        // Draw a grid pattern to show PDF structure
-        self.render_content_placeholder(scene, transform)?;
-        
-        // Add some sample text areas to simulate content
-        self.render_text_placeholders(scene, transform)?;
+        // Comment out placeholders - we want real content now
+        // self.render_content_placeholder(scene, transform)?;
+        // self.render_text_placeholders(scene, transform)?;
         
         // If we have actual content, try to parse it too
         if !content_str.trim().is_empty() {
@@ -596,49 +594,57 @@ impl VelloPdfRenderer {
                     }
                 }
                 Some(&"Tj") if parts.len() >= 2 && in_text_block => {
-                    // Show text string
-                    let text_content = if parts[0].starts_with('(') && parts[0].ends_with(')') {
-                        // Extract text from parentheses
-                        parts[0].trim_start_matches('(').trim_end_matches(')')
+                    // Extract actual text from PDF
+                    let text_str = parts[0..parts.len()-1].join(" ");
+                    let text_content = if text_str.starts_with('(') && text_str.ends_with(')') {
+                        // Extract text from parentheses and decode PDF string encoding
+                        let raw = text_str.trim_start_matches('(').trim_end_matches(')');
+                        // Handle PDF escape sequences
+                        raw.replace("\\n", "\n")
+                           .replace("\\r", "\r")
+                           .replace("\\t", "\t")
+                           .replace("\\(", "(")
+                           .replace("\\)", ")")
+                           .replace("\\\\", "\\")
+                    } else if text_str.starts_with('<') && text_str.ends_with('>') {
+                        // Hex string - decode hex to text (simplified for now)
+                        text_str.trim_start_matches('<').trim_end_matches('>').to_string()
                     } else {
-                        parts[0]
+                        text_str.to_string()
                     };
                     
-                    eprintln!("[VELLO] Rendering text: '{}'", text_content);
+                    eprintln!("[VELLO] Rendering actual text: '{}'", text_content);
                     
-                    // Calculate text dimensions based on content
-                    let text_width = text_size * 0.6 * text_content.len() as f64;
-                    let text_height = text_size;
+                    // Draw actual text as black rectangles (dot-matrix style)
+                    let char_width = text_size * 0.6;
+                    let char_height = text_size;
                     
-                    // Draw a background rectangle for the text
-                    let text_rect = Rect::new(
-                        text_position.x,
-                        text_position.y - text_height as f64 * 0.8,
-                        text_position.x + text_width as f64,
-                        text_position.y + text_height as f64 * 0.2,
-                    );
+                    for (i, ch) in text_content.chars().enumerate() {
+                        if ch != ' ' {
+                            // Draw a small rectangle for each character
+                            let char_x = text_position.x + (i as f64 * char_width);
+                            let char_y = text_position.y;
+                            
+                            let char_rect = Rect::new(
+                                char_x,
+                                char_y - char_height * 0.8,
+                                char_x + char_width * 0.8,
+                                char_y + char_height * 0.1,
+                            );
+                            
+                            // Use black for text
+                            scene.fill(
+                                Fill::NonZero,
+                                transform,
+                                &Brush::Solid(Color::rgb8(0, 0, 0)),
+                                None,
+                                &char_rect,
+                            );
+                        }
+                    }
                     
-                    // Use a light background to show text area
-                    scene.fill(
-                        Fill::NonZero,
-                        transform,
-                        &Brush::Solid(Color::rgb8(250, 250, 200)), // Light yellow background
-                        None,
-                        &text_rect,
-                    );
-                    
-                    // Draw text outline (since we don't have font rendering yet)
-                    let stroke = Stroke::new(0.5);
-                    scene.stroke(
-                        &stroke,
-                        transform,
-                        &Brush::Solid(fill_color),
-                        None,
-                        &text_rect,
-                    );
-                    
-                    // Move position forward
-                    text_position.x += text_width as f64;
+                    // Move position forward by the actual text width
+                    text_position.x += text_content.len() as f64 * char_width;
                 }
                 Some(&"TJ") if parts.len() >= 2 && in_text_block => {
                     // Show text array - simplified handling

@@ -52,9 +52,8 @@ impl BuildSystem {
     fn execute_build(&self, request: &BuildRequest) -> Result<String> {
         println!("🔨 Building target: {}", request.target);
         
-        // Set library path for macOS
+        // No library path needed - pure Rust!
         let mut cmd = Command::new("cargo");
-        cmd.env("DYLD_LIBRARY_PATH", "./lib");
         
         cmd.args(&["build", "--release"]);
         
