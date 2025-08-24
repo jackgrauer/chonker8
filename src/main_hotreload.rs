@@ -285,9 +285,9 @@ impl App {
             }
         }
         
-        // Check if we're on the PDF viewer screen OR Demo screen (which also shows PDF) and handle scrolling
+        // Check if we're on the PDF viewer screen and handle scrolling
         let screen = self.renderer.current_screen();
-        if *screen == Screen::PdfViewer || *screen == Screen::Demo {
+        if *screen == Screen::PdfViewer {
             match key.code {
                 KeyCode::Up => {
                     self.renderer.scroll_up();
@@ -391,9 +391,9 @@ impl App {
             }
         }
         
-        // Handle mouse wheel scrolling on PDF viewer screen OR Demo screen
+        // Handle mouse wheel scrolling on PDF viewer screen
         let screen = self.renderer.current_screen();
-        if *screen == Screen::PdfViewer || *screen == Screen::Demo {
+        if *screen == Screen::PdfViewer {
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
                     self.renderer.scroll_up();

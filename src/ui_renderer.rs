@@ -16,7 +16,6 @@ use chonker8::kitty_protocol::KittyProtocol;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
-    Demo,
     FilePicker,
     PdfViewer,
     Debug,
@@ -80,8 +79,8 @@ impl UIRenderer {
             scroll_offset: 0,
             cursor_x: 0,
             cursor_y: 0,
-            current_screen: Screen::Demo,
-            available_screens: vec![Screen::Demo, Screen::FilePicker, Screen::PdfViewer, Screen::Debug],
+            current_screen: Screen::FilePicker,
+            available_screens: vec![Screen::FilePicker, Screen::PdfViewer, Screen::Debug],
             file_picker,
             current_pdf_path: None,
             current_pdf_image: None,
@@ -178,7 +177,6 @@ impl UIRenderer {
         eprintln!("[DEBUG] Has PDF image: {}", self.current_pdf_image.is_some());
         eprintln!("[DEBUG] PDF path: {:?}", self.current_pdf_path);
         let result = match self.current_screen {
-            Screen::Demo => self.render_demo_screen(),
             Screen::FilePicker => self.render_file_picker_screen(),
             Screen::PdfViewer => {
                 eprintln!("[DEBUG] Calling render_pdf_screen()");
@@ -192,49 +190,10 @@ impl UIRenderer {
     
     pub fn render_with_file_picker(&mut self, file_picker: &mut IntegratedFilePicker) -> Result<()> {
         match self.current_screen {
-            Screen::Demo => self.render_demo_screen(),
             Screen::FilePicker => self.render_integrated_file_picker_screen(file_picker),
             Screen::PdfViewer => self.render_pdf_screen(),
             Screen::Debug => self.render_debug_screen(),
         }
-    }
-    
-    fn render_demo_screen(&mut self) -> Result<()> {
-        // Get terminal size first
-        let (width, height) = terminal::size()?;
-        
-        // Complete clear - both buffer and scrollback in viewport
-        execute!(
-            stdout(), 
-            Clear(ClearType::All),
-            Clear(ClearType::FromCursorDown),
-            MoveTo(0, 0),
-            Hide
-        )?;
-        
-        // Fill screen with spaces to ensure clean slate
-        for y in 0..height {
-            execute!(stdout(), MoveTo(0, y), Print(" ".repeat(width as usize)))?;
-        }
-        execute!(stdout(), MoveTo(0, 0))?;
-        
-        // Render based on mode
-        match self.config.mode.as_str() {
-            "split" => self.render_split_mode(width, height)?,
-            "full" => self.render_full_mode(width, height)?,
-            "minimal" => self.render_minimal_mode(width, height)?,
-            _ => self.render_split_mode(width, height)?,
-        }
-        
-        // Render status bar if enabled
-        if self.config.layout.status_bar {
-            self.render_status_bar(width, height)?;
-        }
-        
-        // Reset colors and ensure everything is flushed
-        execute!(stdout(), ResetColor)?;
-        stdout().flush()?;
-        Ok(())
     }
     
     fn render_file_picker_screen(&mut self) -> Result<()> {
@@ -490,46 +449,6 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_split_mode(&mut self, width: u16, height: u16) -> Result<()> {
-        // Force exact 50/50 split for perfect A-B comparison
-        let split_pos = width / 2;
-        
-        // Render left panel
-        match self.config.layout.left_panel.as_str() {
-            "pdf" => self.render_pdf_panel(0, 0, split_pos, height - 2)?,
-            "text" => self.render_text_panel(0, 0, split_pos, height - 2)?,
-            _ => {}
-        }
-        
-        // Render divider
-        let (_, _, _, _, _, v_line, _, _) = self.config.get_border_chars();
-        execute!(stdout(), SetForegroundColor(self.config.get_highlight_color()))?;
-        for y in 0..height - 2 {
-            execute!(stdout(), MoveTo(split_pos, y), Print(v_line))?;
-        }
-        
-        // Render right panel
-        match self.config.layout.right_panel.as_str() {
-            "text" => self.render_text_panel(split_pos + 1, 0, width - split_pos - 1, height - 2)?,
-            "grid" => self.render_grid_panel(split_pos + 1, 0, width - split_pos - 1, height - 2)?,
-            "debug" => self.render_debug_panel(split_pos + 1, 0, width - split_pos - 1, height - 2)?,
-            _ => {}
-        }
-        
-        Ok(())
-    }
-    
-    fn render_full_mode(&mut self, width: u16, height: u16) -> Result<()> {
-        // Full screen PDF view
-        self.render_pdf_panel(0, 0, width, height - 2)?;
-        Ok(())
-    }
-    
-    fn render_minimal_mode(&self, width: u16, height: u16) -> Result<()> {
-        // Just text, no borders
-        self.render_text_content(0, 0, width, height - 1)?;
-        Ok(())
-    }
     
     fn render_pdf_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
@@ -641,42 +560,6 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_grid_panel(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        // Render as character grid (useful for debugging)
-        execute!(stdout(), SetForegroundColor(Color::Green))?;
-        for row in 0..height.min(self.pdf_content.len() as u16) {
-            for col in 0..width.min(80) {
-                if (row as usize) < self.pdf_content.len() && (col as usize) < self.pdf_content[row as usize].len() {
-                    let ch = self.pdf_content[row as usize][col as usize];
-                    execute!(stdout(), MoveTo(x + col, y + row), Print(ch))?;
-                }
-            }
-        }
-        Ok(())
-    }
-    
-    fn render_debug_panel(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        execute!(stdout(), SetForegroundColor(Color::Cyan))?;
-        let debug_info = vec![
-            format!("Mode: {}", self.config.mode),
-            format!("Theme: {}", self.config.theme.highlight),
-            format!("Border: {}", self.config.theme.border),
-            format!("Page: {}/{}", self.current_page, self.total_pages),
-            format!("Scroll: {}", self.scroll_offset),
-            format!("Cursor: ({}, {})", self.cursor_x, self.cursor_y),
-            format!("Wrap: {}", self.config.panels.text.wrap_text),
-            "".to_string(),
-            "Hot-reload active!".to_string(),
-            "Edit ui.toml to change".to_string(),
-        ];
-        
-        for (i, line) in debug_info.iter().enumerate() {
-            if i < height as usize {
-                execute!(stdout(), MoveTo(x, y + i as u16), Print(line))?;
-            }
-        }
-        Ok(())
-    }
     
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // ALWAYS use Kitty protocol - NO FALLBACK
@@ -827,30 +710,7 @@ impl UIRenderer {
         Ok(())
     }
     
-    fn render_pdf_content_fallback(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
-        
-        // Generate page-specific content
-        let page_content = self.get_page_content();
-        
-        for row in 0..height.min(page_content.len() as u16) {
-            let content_row = (self.scroll_offset + row as usize).min(page_content.len() - 1);
-            let mut line = String::new();
-            
-            for col in 0..width.min(page_content[content_row].len() as u16) {
-                line.push(page_content[content_row][col as usize]);
-            }
-            
-            execute!(stdout(), MoveTo(x, y + row), Print(&line))?;
-        }
-        
-        Ok(())
-    }
     
-    fn get_page_content(&self) -> Vec<Vec<char>> {
-        // Always use the main PDF content - no more page 2 demo
-        self.pdf_content.clone()
-    }
     
     fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
@@ -971,14 +831,6 @@ impl UIRenderer {
         }
     }
     
-    pub fn toggle_mode(&mut self) {
-        self.config.mode = match self.config.mode.as_str() {
-            "split" => "full".to_string(),
-            "full" => "minimal".to_string(),
-            "minimal" => "split".to_string(),
-            _ => "split".to_string(),
-        };
-    }
     
     pub fn toggle_wrap(&mut self) {
         self.config.panels.text.wrap_text = !self.config.panels.text.wrap_text;
@@ -1097,7 +949,6 @@ impl UIRenderer {
     
     pub fn get_screen_name(&self) -> &str {
         match self.current_screen {
-            Screen::Demo => "Demo",
             Screen::FilePicker => "File Picker", 
             Screen::PdfViewer => "PDF Viewer",
             Screen::Debug => "Debug",

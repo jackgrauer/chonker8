@@ -7,20 +7,11 @@
 // - extraction_router: Handles PDF text extraction using pdftotext
 // - document_analyzer: Analyzes PDF pages (still available for metrics)
 
-// Legacy modules (commented out - PDFium removed)
-// pub mod basic;          // Used PDFium - removed
-// pub mod improved;       // Used PDFium - removed  
-// pub mod true_visual;    // Used PDFium - removed
-pub mod pdftotext_extraction;  // Still works - uses pdftotext
-// pub mod braille;        // Used PDFium - removed
-pub mod lopdf_helper;    // New pure Rust helper
-// pub mod document_ai;    // Used PDFium - removed
-// pub mod layoutlm_extraction;  // Used PDFium - removed
-pub mod tokenizer;
-pub mod trocr_extraction;
-pub mod ocr_engine;
-pub mod document_processor;
-pub mod ui_api;
+// Active modules - Pure Rust implementation
+pub mod pdftotext_extraction;  // Text extraction using pdftotext
+pub mod lopdf_helper;         // Pure Rust PDF parsing
+pub mod document_processor;   // Document processing
+pub mod ui_api;               // UI API integration
 
 // Active extraction system - uses pdftotext exclusively
 pub mod document_analyzer;
