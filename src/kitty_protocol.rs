@@ -63,6 +63,11 @@ impl KittyProtocol {
             bail!("Kitty graphics protocol not supported");
         }
         
+        // Move cursor to the position first
+        print!("\x1b[{};{}H", y + 1, x + 1);  // Terminal positions are 1-based
+        use std::io::{self, Write};
+        let _ = io::stdout().flush();
+        
         // Convert image to PNG format
         let mut png_data = Vec::new();
         let mut cursor = Cursor::new(&mut png_data);
@@ -73,11 +78,8 @@ impl KittyProtocol {
         let display_width = width.unwrap_or(img_width);
         let display_height = height.unwrap_or(img_height);
         
-        // Transmit image
+        // Transmit and display image at current cursor position
         let image_id = self.transmit_image_data(&png_data, display_width, display_height)?;
-        
-        // Place image at position
-        self.place_image(image_id, x, y)?;
         
         self.active_images.push(image_id);
         Ok(image_id)
@@ -127,6 +129,8 @@ impl KittyProtocol {
             
             // Send to terminal using Kitty protocol format
             print!("\x1b_G{};{}\x1b\\", control, encoded);
+            use std::io::{self, Write};
+            let _ = io::stdout().flush();
         }
         
         Ok(image_id)
@@ -137,6 +141,8 @@ impl KittyProtocol {
         // Place the image at the specified position
         // Using C=1 for relative cursor positioning
         print!("\x1b_Ga=p,i={},x={},y={},C=1\x1b\\", image_id, x, y);
+        use std::io::{self, Write};
+        let _ = io::stdout().flush();
         Ok(())
     }
     
@@ -148,6 +154,8 @@ impl KittyProtocol {
         
         // Delete specific image
         print!("\x1b_Ga=d,d=i,i={}\x1b\\", image_id);
+        use std::io::{self, Write};
+        let _ = io::stdout().flush();
         
         self.active_images.retain(|&id| id != image_id);
         Ok(())

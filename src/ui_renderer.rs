@@ -11,7 +11,7 @@ use std::io::{self, stdout, Write};
 use std::path::PathBuf;
 use image::DynamicImage;
 use chonker8::integrated_file_picker::IntegratedFilePicker;
-use chonker8::{pdf_renderer, viuer_display, content_extractor, ascii_display};
+use chonker8::{pdf_renderer, content_extractor};
 use chonker8::kitty_protocol::KittyProtocol;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -303,6 +303,7 @@ impl UIRenderer {
         )?;
         
         // Use our new render_pdf_content method for Kitty protocol
+        // Render in the left panel area (inside the border)
         eprintln!("[DEBUG] About to render PDF content at (1,1) size {}x{}", split_x - 2, height - 3);
         self.render_pdf_content(1, 1, split_x - 2, height - 3)?;
         eprintln!("[DEBUG] PDF content rendered");
@@ -628,62 +629,66 @@ impl UIRenderer {
     }
     
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        // Try to use Kitty protocol if supported and we have an image
-        if self.kitty.is_supported() && self.current_pdf_image.is_some() {
+        // Force enable Kitty protocol and display image directly
+        if let Some(ref image) = self.current_pdf_image {
+            eprintln!("[DEBUG] Displaying PDF image at ({}, {}) with size {}x{}", x, y, width, height);
+            
+            // Force enable Kitty protocol
+            self.kitty.force_enable();
+            
             // Clear any previous image
             if let Some(image_id) = self.current_image_id {
                 let _ = self.kitty.clear_image(image_id);
             }
             
-            // Display the PDF image using Kitty protocol
-            if let Some(ref image) = self.current_pdf_image {
-                // Calculate display dimensions to fit the panel
-                let (img_width, img_height) = (image.width(), image.height());
-                
-                // Debug: Log image info
-                eprintln!("[DEBUG] PDF image size: {}x{}", img_width, img_height);
-                eprintln!("[DEBUG] Panel size: {}x{}", width, height);
-                eprintln!("[DEBUG] Display position: ({}, {})", x, y);
-                
-                // Calculate scale to fit panel - convert to cell dimensions
-                // Each character cell is roughly 7x14 pixels in most terminals
-                let cell_width = 7;
-                let cell_height = 14;
-                
-                // Target size in pixels based on character cells
-                let target_width_px = (width as u32) * cell_width;
-                let target_height_px = (height as u32) * cell_height;
-                
-                let scale_x = target_width_px as f32 / img_width as f32;
-                let scale_y = target_height_px as f32 / img_height as f32;
-                let scale = scale_x.min(scale_y) * 0.9; // 90% to leave margin
-                
-                let display_width = (img_width as f32 * scale) as u32;
-                let display_height = (img_height as f32 * scale) as u32;
-                
-                eprintln!("[DEBUG] Display size: {}x{}", display_width, display_height);
-                
-                // Display the image
-                match self.kitty.display_image(
-                    image,
-                    x as u32,
-                    y as u32,
-                    Some(display_width),
-                    Some(display_height),
-                ) {
-                    Ok(image_id) => {
-                        self.current_image_id = Some(image_id);
-                        eprintln!("[DEBUG] Successfully displayed image with ID: {}", image_id);
-                    }
-                    Err(e) => {
-                        eprintln!("[DEBUG] Failed to display image via Kitty: {}", e);
-                        // Fall back to text rendering
-                        self.render_pdf_content_fallback(x, y, width, height)?;
-                    }
+            // Calculate display dimensions with better scaling
+            let (img_width, img_height) = (image.width(), image.height());
+            eprintln!("[DEBUG] PDF image size: {}x{}", img_width, img_height);
+            
+            // Better scaling calculation for beautiful display
+            // Use more accurate cell dimensions (depends on terminal font)
+            let cell_width = 9;  // Typical terminal font width
+            let cell_height = 18; // Typical terminal font height
+            
+            // Calculate available space in pixels with padding
+            let padding = 2; // cells of padding
+            let available_width_px = ((width - padding * 2) as u32) * cell_width;
+            let available_height_px = ((height - padding) as u32) * cell_height;
+            
+            // Calculate scale to fit with aspect ratio preservation
+            let scale_x = available_width_px as f32 / img_width as f32;
+            let scale_y = available_height_px as f32 / img_height as f32;
+            let scale = scale_x.min(scale_y).min(1.0); // Don't upscale beyond original
+            
+            let display_width = (img_width as f32 * scale) as u32;
+            let display_height = (img_height as f32 * scale) as u32;
+            
+            eprintln!("[DEBUG] Display size: {}x{} (scale: {:.2})", display_width, display_height, scale);
+            
+            // Center the image in the panel
+            let x_offset = padding + ((width - padding * 2) - (display_width / cell_width) as u16) / 2;
+            let y_offset = 1 + ((height - padding) - (display_height / cell_height) as u16) / 2;
+            
+            // Display the image using Kitty protocol
+            match self.kitty.display_image(
+                image,
+                (x + x_offset) as u32,
+                (y + y_offset) as u32,
+                Some(display_width),
+                Some(display_height),
+            ) {
+                Ok(image_id) => {
+                    self.current_image_id = Some(image_id);
+                    eprintln!("[DEBUG] Successfully displayed image with ID: {}", image_id);
+                }
+                Err(e) => {
+                    eprintln!("[DEBUG] Failed to display image via Kitty: {}", e);
+                    // Fall back to text rendering
+                    self.render_pdf_content_fallback(x, y, width, height)?;
                 }
             }
         } else {
-            // Fallback to text rendering when Kitty is not available
+            // No image available, use text rendering
             self.render_pdf_content_fallback(x, y, width, height)?;
         }
         
@@ -985,10 +990,10 @@ impl UIRenderer {
         self.add_debug_message(msg.clone());
         eprintln!("[DEBUG] {}", msg);
         
-        // Render first page image with larger dimensions for better visibility
+        // Render first page image with high resolution for beautiful display
         self.add_debug_message("Rendering PDF page...".to_string());
         eprintln!("[DEBUG] Rendering PDF page...");
-        let image = pdf_renderer::render_pdf_page(&pdf_path, 0, 1200, 1600)?;
+        let image = pdf_renderer::render_pdf_page(&pdf_path, 0, 2400, 3200)?;  // Higher res for crisp display
         self.add_debug_message("PDF page rendered".to_string());
         eprintln!("[DEBUG] PDF page rendered");
         
