@@ -285,6 +285,34 @@ impl App {
             }
         }
         
+        // Check if we're on the PDF viewer screen OR Demo screen (which also shows PDF) and handle scrolling
+        let screen = self.renderer.current_screen();
+        if *screen == Screen::PdfViewer || *screen == Screen::Demo {
+            match key.code {
+                KeyCode::Up => {
+                    self.renderer.scroll_up();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    self.renderer.scroll_down();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::PageUp => {
+                    self.renderer.prev_page();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::PageDown => {
+                    self.renderer.next_page();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        
         // Check if we're on the file picker screen and handle file picker input
         if *self.renderer.current_screen() == Screen::FilePicker {
             // Try to handle file picker input
@@ -362,6 +390,38 @@ impl App {
                 }
             }
         }
+        
+        // Handle mouse wheel scrolling on PDF viewer screen OR Demo screen
+        let screen = self.renderer.current_screen();
+        if *screen == Screen::PdfViewer || *screen == Screen::Demo {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.renderer.scroll_up();
+                    self.needs_redraw = true;
+                }
+                MouseEventKind::ScrollDown => {
+                    self.renderer.scroll_down();
+                    self.needs_redraw = true;
+                }
+                // Explicitly ignore all other mouse events to prevent terminal corruption
+                MouseEventKind::Moved => {
+                    // Ignore mouse movement
+                }
+                MouseEventKind::Down(_) => {
+                    // Ignore mouse button presses
+                }
+                MouseEventKind::Up(_) => {
+                    // Ignore mouse button releases
+                }
+                MouseEventKind::Drag(_) => {
+                    // Ignore mouse drag
+                }
+                _ => {
+                    // Ignore any other mouse events
+                }
+            }
+        }
+        
         Ok(())
     }
     

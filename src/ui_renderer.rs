@@ -44,6 +44,7 @@ pub struct UIRenderer {
     debug_messages_loaded: bool,
     kitty: KittyProtocol,
     current_image_id: Option<u32>,
+    image_sent: bool,
 }
 
 impl UIRenderer {
@@ -59,9 +60,13 @@ impl UIRenderer {
         
         let mut kitty = KittyProtocol::new();
         
+        // FORCE ENABLE KITTY FOR TESTING
+        kitty.force_enable();
+        eprintln!("[KITTY] *** FORCE-ENABLED KITTY PROTOCOL FOR TESTING ***");
+        
         // Kitty is MANDATORY for this viewer
         if kitty.is_supported() {
-            eprintln!("[DEBUG] ✅ Kitty graphics protocol detected - PERFECT!");
+            eprintln!("[DEBUG] ✅ Kitty graphics protocol ACTIVE!");
         } else {
             eprintln!("[WARNING] ⚠️  Kitty not detected - PDF images require Kitty terminal!");
             eprintln!("[WARNING] Run with: kitty ./target/release/chonker8-hot [pdf]");
@@ -89,6 +94,7 @@ impl UIRenderer {
             debug_messages_loaded: false,
             kitty,
             current_image_id: None,
+            image_sent: false,
         }
     }
     
@@ -553,8 +559,9 @@ impl UIRenderer {
             execute!(stdout(), MoveTo(x + width - 1, y + height - 1), Print(br))?;
         }
         
-        // Draw title with rendering method indicator
-        let title = format!(" 📄 PDF Page {}/{} [lopdf-vello-kitty] ", self.current_page, self.total_pages);
+        // Draw title with rendering method indicator and scroll info
+        let title = format!(" 📄 PDF Page {}/{} [lopdf-vello-kitty] Scroll: {} ", 
+                          self.current_page, self.total_pages, self.scroll_offset);
         execute!(
             stdout(),
             MoveTo(x + 2, y),
@@ -674,21 +681,29 @@ impl UIRenderer {
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // ALWAYS use Kitty protocol - NO FALLBACK
         if let Some(ref image) = self.current_pdf_image {
-            eprintln!("[DEBUG] KITTY PROTOCOL MANDATORY - Displaying PDF at ({}, {}) size {}x{}", x, y, width, height);
+            // Only send the image ONCE to avoid slowdown
+            if self.image_sent {
+                return Ok(()); // Image already sent, skip
+            }
             
-            // Try the SIMPLE approach first
-            eprintln!("[DEBUG] Using SIMPLE Kitty protocol...");
+            eprintln!("[DEBUG] Sending Kitty image (first time only)");
+            self.image_sent = true;
+            
+            // Move image further down into the visible area
+            // Start at y+10 to ensure it's well within the panel
+            let image_y = y + 10;
+            let image_x = x + 2;
             
             // Move cursor to position
             execute!(
                 stdout(),
-                MoveTo(x + 1, y + 1)
+                MoveTo(image_x, image_y)
             )?;
             
-            // Use inline simple Kitty implementation
-            struct SimpleKitty;
-            impl SimpleKitty {
-                fn send_image_sized(image: &DynamicImage, width: u32, height: u32) -> Result<()> {
+            // Use inline Kitty implementation with correct protocol
+            struct KittyImage;
+            impl KittyImage {
+                fn send_image_positioned(image: &DynamicImage, width: u32, height: u32, x: u16, y: u16) -> Result<()> {
                     // Convert to PNG
                     let mut png_data = Vec::new();
                     image.write_to(&mut std::io::Cursor::new(&mut png_data), image::ImageFormat::Png)?;
@@ -697,35 +712,93 @@ impl UIRenderer {
                     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
                     let encoded = BASE64.encode(&png_data);
                     
-                    // Clear existing
-                    print!("\x1b_Ga=d\x1b\\");
+                    // First, clear the terminal properly
                     std::io::stdout().flush()?;
                     
-                    // Send with size
-                    print!("\x1b_Ga=T,f=100,s={},v={};{}\x1b\\", width, height, encoded);
+                    // Move cursor to position using crossterm, not raw escape codes
+                    execute!(stdout(), MoveTo(x, y))?;
+                    
+                    // Clear any existing images - use raw bytes to ensure proper escape
+                    use std::io::Write;
+                    let clear_cmd = b"\x1b_Ga=d\x1b\\";
+                    std::io::stdout().write_all(clear_cmd)?;
                     std::io::stdout().flush()?;
                     
-                    eprintln!("[SIMPLE_KITTY] Sent sized {}x{}, {} bytes encoded", width, height, encoded.len());
+                    // Kitty protocol requires chunking for large images
+                    // Maximum chunk size is 4096 bytes
+                    const CHUNK_SIZE: usize = 4096;
+                    let encoded_bytes = encoded.as_bytes();
+                    
+                    if encoded_bytes.len() <= CHUNK_SIZE {
+                        // Small image, send in one go
+                        let mut cmd = Vec::new();
+                        cmd.extend_from_slice(b"\x1b_Ga=T,f=100,s=");
+                        cmd.extend_from_slice(width.to_string().as_bytes());
+                        cmd.extend_from_slice(b",v=");
+                        cmd.extend_from_slice(height.to_string().as_bytes());
+                        cmd.extend_from_slice(b";");
+                        cmd.extend_from_slice(encoded_bytes);
+                        cmd.extend_from_slice(b"\x1b\\");
+                        
+                        std::io::stdout().write_all(&cmd)?;
+                    } else {
+                        // Large image, send in chunks
+                        let chunks: Vec<&[u8]> = encoded_bytes.chunks(CHUNK_SIZE).collect();
+                        
+                        for (i, chunk) in chunks.iter().enumerate() {
+                            let mut cmd = Vec::new();
+                            cmd.extend_from_slice(b"\x1b_G");
+                            
+                            if i == 0 {
+                                // First chunk has the full header
+                                cmd.extend_from_slice(b"a=T,f=100,s=");
+                                cmd.extend_from_slice(width.to_string().as_bytes());
+                                cmd.extend_from_slice(b",v=");
+                                cmd.extend_from_slice(height.to_string().as_bytes());
+                                cmd.extend_from_slice(b",m=1;");
+                            } else if i == chunks.len() - 1 {
+                                // Last chunk
+                                cmd.extend_from_slice(b"m=0;");
+                            } else {
+                                // Middle chunks
+                                cmd.extend_from_slice(b"m=1;");
+                            }
+                            
+                            cmd.extend_from_slice(chunk);
+                            cmd.extend_from_slice(b"\x1b\\");
+                            
+                            std::io::stdout().write_all(&cmd)?;
+                            std::io::stdout().flush()?;
+                        }
+                        
+                        eprintln!("[KITTY] Sent large image in {} chunks", chunks.len());
+                    }
+                    
+                    std::io::stdout().flush()?;
+                    
+                    eprintln!("[KITTY] Sent image {}x{} at ({},{}), {} bytes encoded", 
+                             width, height, x, y, encoded.len());
                     
                     Ok(())
                 }
             }
             
-            // Scale the image for display
-            let scale = 0.15; // 15% of original size
+            // Scale the image for display - smaller to reduce lag
+            let scale = 0.1; // 10% of original size to reduce data transfer
             let display_width = (image.width() as f32 * scale) as u32;
             let display_height = (image.height() as f32 * scale) as u32;
             
-            eprintln!("[DEBUG] Original: {}x{}, Display: {}x{}", 
-                     image.width(), image.height(), display_width, display_height);
+            eprintln!("[DEBUG] Original: {}x{}, Display: {}x{}, Position: ({}, {})", 
+                     image.width(), image.height(), display_width, display_height, image_x, image_y);
             
-            match SimpleKitty::send_image_sized(image, display_width, display_height) {
+            // Send image at fixed position within panel
+            match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
                 Ok(_) => {
-                    eprintln!("[DEBUG] ✅ SIMPLE KITTY SUCCESS!");
+                    eprintln!("[DEBUG] ✅ KITTY IMAGE SENT SUCCESSFULLY!");
                 }
                 Err(e) => {
-                    eprintln!("[ERROR] SIMPLE KITTY FAILED: {}", e);
-                    eprintln!("[ERROR] This viewer REQUIRES Kitty terminal!");
+                    eprintln!("[ERROR] KITTY FAILED: {}", e);
+                    eprintln!("[ERROR] This viewer REQUIRES Kitty-compatible terminal!");
                     
                     // Show error message on screen
                     execute!(
@@ -874,8 +947,9 @@ impl UIRenderer {
                 }
             }
             _ => {
+                // Larger scroll steps for PDF image viewing
                 if self.scroll_offset > 0 {
-                    self.scroll_offset -= 1;
+                    self.scroll_offset = self.scroll_offset.saturating_sub(5);
                 }
             }
         }
@@ -889,8 +963,9 @@ impl UIRenderer {
                 }
             }
             _ => {
-                if self.scroll_offset < self.pdf_content.len().saturating_sub(10) {
-                    self.scroll_offset += 1;
+                // Larger scroll steps for PDF image viewing (up to 100 to see off-screen images)
+                if self.scroll_offset < 100 {
+                    self.scroll_offset = (self.scroll_offset + 5).min(100);
                 }
             }
         }
@@ -1035,6 +1110,7 @@ impl UIRenderer {
         // Clear debug messages for new PDF load
         self.debug_messages.clear();
         self.debug_scroll_offset = 0;
+        self.image_sent = false; // Reset flag for new PDF
         
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
         eprintln!("[INFO] Left pane: lopdf-vello-kitty rendering");
