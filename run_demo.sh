@@ -22,4 +22,4 @@ echo "Press any key to start..."
 read -n 1
 
 # Run the demo
-DYLD_LIBRARY_PATH=./lib ./target/release/chonker8-demo
+./target/release/chonker8-demo

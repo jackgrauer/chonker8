@@ -43,7 +43,7 @@ EOF
 
 # Compile and run
 echo "Compiling test..."
-DYLD_LIBRARY_PATH=./lib rustc test_direct_load.rs \
+rustc test_direct_load.rs \
     -L target/release/deps \
     --extern chonker8=target/release/libchonker8.rlib \
     --extern anyhow=target/release/deps/libanyhow*.rlib \
@@ -53,11 +53,11 @@ DYLD_LIBRARY_PATH=./lib rustc test_direct_load.rs \
 
 if [ $? -eq 0 ]; then
     echo "Running test..."
-    DYLD_LIBRARY_PATH=./lib ./test_direct_load
+    ./test_direct_load
 else
     echo "Compilation failed, trying with cargo..."
     # Fallback to using cargo
-    DYLD_LIBRARY_PATH=./lib cargo run --release --bin test-extraction -- analyze /Users/jack/Desktop/BERF-CERT.pdf --page 0
+    cargo run --release --bin test-extraction -- analyze /Users/jack/Desktop/BERF-CERT.pdf --page 0
 fi
 
 # Clean up

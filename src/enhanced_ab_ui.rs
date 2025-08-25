@@ -13,7 +13,6 @@ use std::io::{stdout, Write};
 use std::path::PathBuf;
 use image::{DynamicImage, ImageBuffer, Rgba};
 use crate::kitty_protocol::KittyProtocol;
-use crate::vello_pdf_renderer::VelloPdfRenderer;
 
 // Dark theme colors optimized for PDF comparison
 pub struct DarkTheme {
@@ -365,29 +364,6 @@ impl EnhancedABComparison {
             .collect();
     }
     
-    /// Load PDF using Vello renderer and set up for display
-    pub fn load_pdf_with_vello(&mut self, pdf_path: &std::path::Path) -> Result<()> {
-        eprintln!("[UI] Loading PDF with Vello renderer: {:?}", pdf_path);
-        
-        // Create Vello renderer
-        let mut renderer = VelloPdfRenderer::new(pdf_path)?;
-        
-        // Get page count
-        self.total_pages = renderer.page_count();
-        eprintln!("[UI] PDF has {} pages", self.total_pages);
-        
-        // Render the current page (0-indexed)
-        let page_index = self.current_page.saturating_sub(1);
-        let rendered_image = renderer.render_page(page_index, 800, 1000)?;
-        
-        eprintln!("[UI] Rendered page {} as {}x{} image", 
-                 self.current_page, rendered_image.width(), rendered_image.height());
-        
-        // Store the rendered image
-        self.pdf_image = Some(rendered_image);
-        
-        Ok(())
-    }
     
     pub fn toggle_edit_mode(&mut self) {
         self.edit_mode = !self.edit_mode;

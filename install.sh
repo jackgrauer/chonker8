@@ -7,7 +7,7 @@ echo "====================================="
 
 # Build the release version
 echo "Building release version..."
-DYLD_LIBRARY_PATH=./lib cargo build --release --bin chonker8-hot
+cargo build --release --bin chonker8-hot
 
 if [ $? -ne 0 ]; then
     echo "❌ Build failed!"

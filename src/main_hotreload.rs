@@ -39,10 +39,6 @@ struct Args {
     /// Test Kitty graphics protocol detection
     #[arg(long)]
     test_kitty: bool,
-    
-    /// Test Vello PDF renderer with image format fix
-    #[arg(long)]
-    test_vello: bool,
 }
 
 struct App {
@@ -130,7 +126,7 @@ impl App {
             terminal::enable_raw_mode()?;
             execute!(stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
         } else {
-            eprintln!("[DEBUG] Not a TTY, skipping terminal setup");
+            eprintln!("[DEBUG] Not a TTY, running in non-interactive mode");
         }
         
         // Initial render
@@ -221,32 +217,49 @@ impl App {
                 self.needs_redraw = false;
             }
             
-            // Handle input (non-blocking with timeout)
-            if event::poll(Duration::from_millis(50))? {
-                match event::read()? {
-                    Event::Key(key) => self.handle_key(key)?,
-                    Event::Mouse(mouse) => self.handle_mouse(mouse)?,
-                    Event::Resize(_, _) => {
-                        // Complete screen reset on resize
-                        execute!(
-                            stdout(), 
-                            Clear(ClearType::All),
-                            Clear(ClearType::Purge),
-                            MoveTo(0, 0)
-                        )?;
-                        stdout().flush()?;
-                        // Small delay to let terminal catch up
-                        std::thread::sleep(Duration::from_millis(10));
-                        self.needs_redraw = true;
-                    },
-                    _ => {}
+            // Handle input only if we're in a TTY
+            if is_tty {
+                if event::poll(Duration::from_millis(50))? {
+                    match event::read()? {
+                        Event::Key(key) => self.handle_key(key)?,
+                        Event::Mouse(mouse) => self.handle_mouse(mouse)?,
+                        Event::Resize(_, _) => {
+                            // Complete screen reset on resize
+                            execute!(
+                                stdout(), 
+                                Clear(ClearType::All),
+                                Clear(ClearType::Purge),
+                                MoveTo(0, 0)
+                            )?;
+                            stdout().flush()?;
+                            // Small delay to let terminal catch up
+                            std::thread::sleep(Duration::from_millis(10));
+                            self.needs_redraw = true;
+                        },
+                        _ => {}
+                    }
+                }
+            } else {
+                // In non-TTY mode, just sleep briefly to avoid busy-waiting
+                std::thread::sleep(Duration::from_millis(50));
+                
+                // Auto-exit after displaying the image for a moment
+                static mut NON_TTY_COUNTER: u32 = 0;
+                unsafe {
+                    NON_TTY_COUNTER += 1;
+                    if NON_TTY_COUNTER > 40 { // 2 seconds
+                        eprintln!("[DEBUG] Non-TTY mode timeout, exiting gracefully");
+                        self.running = false;
+                    }
                 }
             }
         }
         
-        // Cleanup
-        execute!(stdout(), Show, LeaveAlternateScreen, DisableMouseCapture)?;
-        terminal::disable_raw_mode()?;
+        // Cleanup - only if we're in a TTY
+        if is_tty {
+            execute!(stdout(), Show, LeaveAlternateScreen, DisableMouseCapture)?;
+            terminal::disable_raw_mode()?;
+        }
         
         Ok(())
     }
@@ -525,82 +538,26 @@ fn main() -> Result<()> {
         return Ok(());
     }
     
-    // Handle Vello renderer test mode
-    if args.test_vello {
-        capture_info!("Testing Vello PDF renderer with image format fix...");
-        
-        // Check for a test PDF file
-        let test_pdf = if let Some(ref pdf_path) = args.pdf_file {
-            pdf_path.clone()
-        } else {
-            // Use a default test PDF if available
-            let candidates = ["test.pdf", "real_test.pdf", "chonker_test.pdf"];
-            let mut found_pdf = None;
-            for candidate in &candidates {
-                let path = PathBuf::from(candidate);
-                if path.exists() {
-                    found_pdf = Some(path);
-                    break;
-                }
-            }
-            
-            if let Some(pdf) = found_pdf {
-                pdf
-            } else {
-                capture_error!("❌ No test PDF found. Please provide a PDF file or ensure test.pdf exists.");
-                capture_info!("Usage: chonker8-hot --test-vello path/to/your.pdf");
-                return Ok(());
-            }
-        };
-        
-        capture_info!("📄 Using test PDF: {:?}", test_pdf);
-        
-        // Test the Vello renderer directly
-        use chonker8::vello_pdf_renderer::VelloPdfRenderer;
-        
-        capture_info!("🔧 Initializing Vello PDF renderer...");
-        match VelloPdfRenderer::new(&test_pdf) {
-            Ok(mut renderer) => {
-                capture_info!("✅ Vello renderer initialized successfully");
-                
-                // Test rendering a page
-                capture_info!("🎨 Rendering page 1 with image format fix...");
-                match renderer.render_page(1, 600, 800) {
-                    Ok(image) => {
-                        capture_info!("✅ Page rendered successfully!");
-                        capture_info!("   Image dimensions: {}x{}", image.width(), image.height());
-                        capture_info!("   Image format: {:?}", image.color());
-                        
-                        // Check if any XObject images were processed
-                        capture_info!("🖼️  PDF image format fix test completed");
-                        capture_info!("   - DCTDecode (JPEG) images: Pass-through enabled");
-                        capture_info!("   - FlateDecode (Raw) images: PNG conversion enabled");
-                        capture_info!("   - Color space detection: DeviceRGB/DeviceGray supported");
-                    }
-                    Err(e) => {
-                        capture_error!("❌ Failed to render page: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                capture_error!("❌ Failed to initialize Vello renderer: {}", e);
-            }
-        }
-        
-        capture_info!("🎯 Vello PDF renderer test completed");
-        return Ok(());
-    }
     
     // Create app
     let mut app = App::new()?;
     
-    // Load PDF if provided
+    // Load PDF if provided, or use default test PDF
     if let Some(pdf_path) = args.pdf_file {
         eprintln!("[INFO] A/B Comparison Mode:");
-        eprintln!("[INFO] Left pane: lopdf-vello-kitty rendering");
+        eprintln!("[INFO] Left pane: lopdf-kitty rendering");
         eprintln!("[INFO] Right pane: pdftotext extraction");
         app.load_pdf(&pdf_path.to_string_lossy())?;
     } else {
+        // Auto-load the test PDF for easier development
+        let test_pdf = PathBuf::from("/Users/jack/Documents/chonker_test.pdf");
+        if test_pdf.exists() {
+            eprintln!("[INFO] Auto-loading test PDF: {:?}", test_pdf);
+            eprintln!("[INFO] A/B Comparison Mode:");
+            eprintln!("[INFO] Left pane: lopdf-kitty rendering");
+            eprintln!("[INFO] Right pane: pdftotext extraction");
+            app.load_pdf(&test_pdf.to_string_lossy())?;
+        } else {
         // Show usage
         println!("Usage: chonker8-hot [pdf_file]");
         println!("       chonker8-hot --help");
@@ -641,8 +598,9 @@ fn main() -> Result<()> {
             }
         }
         
-        app.renderer.set_pdf_content(demo_content);
-        app.renderer.set_total_pages(2);
+            app.renderer.set_pdf_content(demo_content);
+            app.renderer.set_total_pages(2);
+        }
     }
     
     // Run the app

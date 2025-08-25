@@ -253,7 +253,7 @@ impl UIRenderer {
             MoveTo(2, 0),
             SetForegroundColor(Color::Yellow),
             SetAttributes(Attributes::from(Attribute::Bold)),
-            Print("◀ PDF RENDER (lopdf→vello→kitty) ▶"),
+            Print("◀ PDF RENDER (lopdf→kitty) ▶"),
             SetAttributes(Attributes::from(Attribute::Reset))
         )?;
         
@@ -564,13 +564,14 @@ impl UIRenderer {
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // ALWAYS use Kitty protocol - NO FALLBACK
         if let Some(ref image) = self.current_pdf_image {
-            // Only send the image ONCE to avoid slowdown
-            if self.image_sent {
-                return Ok(()); // Image already sent, skip
+            // Send image on first render or if screen was cleared
+            if !self.image_sent {
+                eprintln!("[DEBUG] Sending Kitty image");
+                self.image_sent = true;
+            } else {
+                // Image already on screen, just return
+                return Ok(());
             }
-            
-            eprintln!("[DEBUG] Sending Kitty image (first time only)");
-            self.image_sent = true;
             
             // Use inline Kitty implementation with correct protocol
             struct KittyImage;
@@ -603,10 +604,11 @@ impl UIRenderer {
                     
                     if encoded_bytes.len() <= CHUNK_SIZE {
                         // Small image, send in one go
+                        // Use c= and r= for cell dimensions (what we want to display in)
                         let mut cmd = Vec::new();
-                        cmd.extend_from_slice(b"\x1b_Ga=T,f=100,s=");
+                        cmd.extend_from_slice(b"\x1b_Ga=T,f=100,c=");
                         cmd.extend_from_slice(width.to_string().as_bytes());
-                        cmd.extend_from_slice(b",v=");
+                        cmd.extend_from_slice(b",r=");
                         cmd.extend_from_slice(height.to_string().as_bytes());
                         cmd.extend_from_slice(b";");
                         cmd.extend_from_slice(encoded_bytes);
@@ -623,9 +625,10 @@ impl UIRenderer {
                             
                             if i == 0 {
                                 // First chunk has the full header
-                                cmd.extend_from_slice(b"a=T,f=100,s=");
+                                // Use c= and r= for cell dimensions
+                                cmd.extend_from_slice(b"a=T,f=100,c=");
                                 cmd.extend_from_slice(width.to_string().as_bytes());
-                                cmd.extend_from_slice(b",v=");
+                                cmd.extend_from_slice(b",r=");
                                 cmd.extend_from_slice(height.to_string().as_bytes());
                                 cmd.extend_from_slice(b",m=1;");
                             } else if i == chunks.len() - 1 {
@@ -655,20 +658,20 @@ impl UIRenderer {
                 }
             }
             
-            // Calculate scale to fit within the panel dimensions
-            // Similar to chonker7's approach - fit to available space
-            let panel_width = (width - 4) as f32;  // Account for padding
-            let panel_height = (height - 4) as f32;
-            let scale_x = panel_width / image.width() as f32;
-            let scale_y = panel_height / image.height() as f32;
-            let scale = scale_x.min(scale_y).min(0.8); // Max 80% to leave some margin
+            // Calculate scale to fit within the left panel (half the terminal width)
+            // The panel dimensions are in terminal cells, not pixels
+            // Kitty graphics use cells as units for placement
+            let panel_width_cells = width.saturating_sub(4);  // Leave some padding
+            let panel_height_cells = height.saturating_sub(4);
             
-            let display_width = (image.width() as f32 * scale) as u32;
-            let display_height = (image.height() as f32 * scale) as u32;
+            // For Kitty protocol, we specify size in terminal cells
+            // The image will be scaled to fit within these dimensions
+            let display_width = panel_width_cells.min(50) as u32;  // Cap at reasonable size
+            let display_height = panel_height_cells.min(35) as u32;
             
-            // Center the image in the panel
-            let image_x = x + ((width - display_width as u16) / 2).max(2);
-            let image_y = y + ((height - display_height as u16) / 2).max(2);
+            // Position at top-left of the panel with small margin
+            let image_x = x + 2;
+            let image_y = y + 2;
             
             eprintln!("[DEBUG] Original: {}x{}, Display: {}x{}, Position: ({}, {})", 
                      image.width(), image.height(), display_width, display_height, image_x, image_y);
@@ -969,7 +972,7 @@ impl UIRenderer {
         self.image_sent = false; // Reset flag for new PDF
         
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
-        eprintln!("[INFO] Left pane: lopdf-vello-kitty rendering");
+        eprintln!("[INFO] Left pane: lopdf-kitty rendering");
         eprintln!("[INFO] Right pane: pdftotext extraction");
         self.add_debug_message(msg.clone());
         eprintln!("[DEBUG] {}", msg);
@@ -984,8 +987,8 @@ impl UIRenderer {
         eprintln!("[DEBUG] {}", msg);
         
         // Render first page image - same size as chonker7
-        self.add_debug_message("Rendering PDF with lopdf-vello-kitty...".to_string());
-        eprintln!("[DEBUG] Rendering PDF with Vello GPU acceleration...");
+        self.add_debug_message("Rendering PDF with lopdf-kitty...".to_string());
+        eprintln!("[DEBUG] Rendering PDF with direct bitmap renderer...");
         let mut image = pdf_renderer::render_pdf_page(&pdf_path, 0, 800, 1000)?;  // Same as chonker7
         
         // Apply dark mode filter for better visibility

@@ -409,7 +409,7 @@ fi
 
 # Phase 6: Test compilation
 echo -e "\n🔨 Phase 6: Testing Compilation"
-DYLD_LIBRARY_PATH=./lib cargo build --release --bin ui_demo 2>&1 | head -20
+cargo build --release --bin ui_demo 2>&1 | head -20
 
 echo -e "\n✨ Deployment Complete!"
 echo "=================================================="
@@ -420,7 +420,7 @@ echo ""
 echo "🎯 Ready for UI deployment!"
 echo ""
 echo "Next steps:"
-echo "1. Run: DYLD_LIBRARY_PATH=./lib cargo build --release"
-echo "2. Run: DYLD_LIBRARY_PATH=./lib cargo run --release --bin ui_demo"
+echo "1. Run: cargo build --release"
+echo "2. Run: cargo run --release --bin ui_demo"
 echo "3. Integrate with your preferred web framework (Axum/Actix/Warp)"
 echo "4. Connect your frontend using the API"

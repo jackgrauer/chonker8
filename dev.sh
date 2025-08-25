@@ -6,7 +6,7 @@ echo "=========================================="
 
 # Build the hot-reload version
 echo "Building chonker8-hot..."
-DYLD_LIBRARY_PATH=./lib cargo build --bin chonker8-hot
+cargo build --bin chonker8-hot
 
 if [ $? -ne 0 ]; then
     echo "❌ Build failed!"
@@ -18,7 +18,7 @@ echo "✅ Build successful!"
 # Start the app in background
 echo ""
 echo "Starting chonker8-hot in background..."
-DYLD_LIBRARY_PATH=./lib ./target/debug/chonker8-hot test.pdf &
+./target/debug/chonker8-hot test.pdf &
 APP_PID=$!
 
 echo "PID: $APP_PID"

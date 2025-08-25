@@ -22,4 +22,4 @@ echo "If you see the file picker without a crash, the fix is working!"
 echo ""
 
 cd /Users/jack/chonker8
-DYLD_LIBRARY_PATH=./lib ./target/release/chonker8-hot
+./target/release/chonker8-hot

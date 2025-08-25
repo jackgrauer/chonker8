@@ -56,8 +56,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 run_test "Binary exists" "test -f ./target/release/chonker8" ""
 run_test "Binary is executable" "test -x ./target/release/chonker8" ""
-run_test "Version check" "DYLD_LIBRARY_PATH=./lib ./target/release/chonker8 --version" "chonker8"
-run_test "Help command" "DYLD_LIBRARY_PATH=./lib ./target/release/chonker8 --help" "Usage"
+run_test "Version check" "./target/release/chonker8 --version" "chonker8"
+run_test "Help command" "./target/release/chonker8 --help" "Usage"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -103,7 +103,7 @@ c.save()
 fi
 
 if [ -f /tmp/test.pdf ]; then
-    run_test "Extract from test PDF" "DYLD_LIBRARY_PATH=./lib timeout 5 ./target/release/chonker8 extract /tmp/test.pdf --page 1" ""
+    run_test "Extract from test PDF" "timeout 5 ./target/release/chonker8 extract /tmp/test.pdf --page 1" ""
 fi
 
 # Try with a real PDF if available
@@ -116,7 +116,7 @@ TEST_PDFS=(
 for pdf in "${TEST_PDFS[@]}"; do
     if [ -f "$pdf" ]; then
         echo "  Found test PDF: $(basename "$pdf")"
-        run_test "Extract $(basename "$pdf")" "DYLD_LIBRARY_PATH=./lib timeout 10 ./target/release/chonker8 extract '$pdf' --page 1 --width 50 --height 20" ""
+        run_test "Extract $(basename "$pdf")" "timeout 10 ./target/release/chonker8 extract '$pdf' --page 1 --width 50 --height 20" ""
         break
     fi
 done
@@ -134,7 +134,7 @@ echo "  Binary size: $BINARY_SIZE"
 if [ -f "/Users/jack/Desktop/BERF-CERT.pdf" ]; then
     echo "  Running performance test..."
     start_time=$(date +%s%N)
-    DYLD_LIBRARY_PATH=./lib timeout 10 ./target/release/chonker8 extract "/Users/jack/Desktop/BERF-CERT.pdf" --page 1 --raw > /dev/null 2>&1
+    timeout 10 ./target/release/chonker8 extract "/Users/jack/Desktop/BERF-CERT.pdf" --page 1 --raw > /dev/null 2>&1
     end_time=$(date +%s%N)
     elapsed=$(( (end_time - start_time) / 1000000 ))
     echo "  Extraction time: ${elapsed}ms"
@@ -148,7 +148,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # Test OCR mode specifically
 if [ -f "/Users/jack/Desktop/BERF-CERT.pdf" ]; then
     echo "  Testing OCR extraction mode..."
-    if DYLD_LIBRARY_PATH=./lib timeout 10 ./target/release/chonker8 extract "/Users/jack/Desktop/BERF-CERT.pdf" --mode ocr --page 1 --raw 2>&1 | grep -q "TrOCR"; then
+    if timeout 10 ./target/release/chonker8 extract "/Users/jack/Desktop/BERF-CERT.pdf" --mode ocr --page 1 --raw 2>&1 | grep -q "TrOCR"; then
         echo -e "  ${GREEN}✅ TrOCR mode activated${NC}"
     else
         echo -e "  ${YELLOW}⚠️ TrOCR mode not detected in output${NC}"
