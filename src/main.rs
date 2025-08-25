@@ -1,8 +1,16 @@
 // Hot-reload TUI for chonker8
+// Main entry point that sets up the PDF viewer with hot-reload
+
+// Use the new module structure through path imports
+#[path = "core/config.rs"]
 mod ui_config;
+#[path = "display/terminal_ui.rs"]
 mod ui_renderer;
+#[path = "ml_extraction/mod.rs"]
 mod pdf_extraction;
+#[path = "core/old_config.rs"]
 mod config;
+#[path = "core/hot_reload.rs"]
 mod hot_reload_manager;
 
 use anyhow::Result;
