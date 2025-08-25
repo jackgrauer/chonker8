@@ -4,8 +4,6 @@ mod ui_renderer;
 mod pdf_extraction;
 mod config;
 mod hot_reload_manager;
-mod build_system;
-mod output_capture;
 
 use anyhow::Result;
 use clap::Parser;
@@ -81,18 +79,18 @@ impl App {
     }
     
     fn load_pdf(&mut self, path: &str) -> Result<()> {
-        capture_debug!("load_pdf called with: {}", path);
+        eprintln!("[DEBUG] load_pdf called with: {}", path);
         eprintln!("[DEBUG] Command line loading PDF: {}", path);
         self.pdf_path = Some(path.to_string());
         
         // Load PDF synchronously to avoid runtime issues
         let pdf_path = PathBuf::from(path);
-        capture_debug!("Checking if path exists: {}", pdf_path.exists());
+        eprintln!("[DEBUG] Checking if path exists: {}", pdf_path.exists());
         eprintln!("[DEBUG] PDF path exists: {}", pdf_path.exists());
         eprintln!("[DEBUG] Full path: {:?}", pdf_path);
         
         if pdf_path.exists() {
-            capture_debug!("Path exists, calling renderer.load_pdf");
+            eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
             eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
             // Load synchronously without async runtime
             match self.renderer.load_pdf(pdf_path) {
@@ -519,21 +517,18 @@ impl App {
 }
 
 fn main() -> Result<()> {
-    // Initialize output capture system for rexpect testing
-    output_capture::initialize_output_capture();
-    
     // Parse command line arguments using clap
     let args = Args::parse();
     
     // Handle test mode
     if args.test_kitty {
-        capture_info!("Testing Kitty graphics protocol...");
+        eprintln!("Testing Kitty graphics protocol...");
         if std::env::var("KITTY_WINDOW_ID").is_ok() {
-            capture_info!("✅ Kitty graphics protocol detected");
-            capture_info!("  KITTY_WINDOW_ID={}", std::env::var("KITTY_WINDOW_ID").unwrap());
+            eprintln!("✅ Kitty graphics protocol detected");
+            eprintln!("  KITTY_WINDOW_ID={}", std::env::var("KITTY_WINDOW_ID").unwrap());
         } else {
-            capture_warning!("❌ Kitty graphics protocol not detected");
-            capture_warning!("  Run this in a Kitty terminal for graphics support");
+            eprintln!("❌ Kitty graphics protocol not detected");
+            eprintln!("  Run this in a Kitty terminal for graphics support");
         }
         return Ok(());
     }
