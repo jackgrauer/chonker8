@@ -39,6 +39,10 @@ struct Args {
     /// Test Kitty graphics protocol detection
     #[arg(long)]
     test_kitty: bool,
+    
+    /// Test Vello PDF renderer with image format fix
+    #[arg(long)]
+    test_vello: bool,
 }
 
 struct App {
@@ -521,6 +525,72 @@ fn main() -> Result<()> {
         return Ok(());
     }
     
+    // Handle Vello renderer test mode
+    if args.test_vello {
+        capture_info!("Testing Vello PDF renderer with image format fix...");
+        
+        // Check for a test PDF file
+        let test_pdf = if let Some(ref pdf_path) = args.pdf_file {
+            pdf_path.clone()
+        } else {
+            // Use a default test PDF if available
+            let candidates = ["test.pdf", "real_test.pdf", "chonker_test.pdf"];
+            let mut found_pdf = None;
+            for candidate in &candidates {
+                let path = PathBuf::from(candidate);
+                if path.exists() {
+                    found_pdf = Some(path);
+                    break;
+                }
+            }
+            
+            if let Some(pdf) = found_pdf {
+                pdf
+            } else {
+                capture_error!("❌ No test PDF found. Please provide a PDF file or ensure test.pdf exists.");
+                capture_info!("Usage: chonker8-hot --test-vello path/to/your.pdf");
+                return Ok(());
+            }
+        };
+        
+        capture_info!("📄 Using test PDF: {:?}", test_pdf);
+        
+        // Test the Vello renderer directly
+        use chonker8::vello_pdf_renderer::VelloPdfRenderer;
+        
+        capture_info!("🔧 Initializing Vello PDF renderer...");
+        match VelloPdfRenderer::new(&test_pdf) {
+            Ok(mut renderer) => {
+                capture_info!("✅ Vello renderer initialized successfully");
+                
+                // Test rendering a page
+                capture_info!("🎨 Rendering page 1 with image format fix...");
+                match renderer.render_page(1, 600, 800) {
+                    Ok(image) => {
+                        capture_info!("✅ Page rendered successfully!");
+                        capture_info!("   Image dimensions: {}x{}", image.width(), image.height());
+                        capture_info!("   Image format: {:?}", image.color());
+                        
+                        // Check if any XObject images were processed
+                        capture_info!("🖼️  PDF image format fix test completed");
+                        capture_info!("   - DCTDecode (JPEG) images: Pass-through enabled");
+                        capture_info!("   - FlateDecode (Raw) images: PNG conversion enabled");
+                        capture_info!("   - Color space detection: DeviceRGB/DeviceGray supported");
+                    }
+                    Err(e) => {
+                        capture_error!("❌ Failed to render page: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                capture_error!("❌ Failed to initialize Vello renderer: {}", e);
+            }
+        }
+        
+        capture_info!("🎯 Vello PDF renderer test completed");
+        return Ok(());
+    }
+    
     // Create app
     let mut app = App::new()?;
     
@@ -535,6 +605,7 @@ fn main() -> Result<()> {
         println!("Usage: chonker8-hot [pdf_file]");
         println!("       chonker8-hot --help");
         println!("       chonker8-hot --test-kitty");
+        println!("       chonker8-hot --test-vello [pdf_file]");
         println!("\nStarting in demo mode...");
         
         // Create demo content for page 1

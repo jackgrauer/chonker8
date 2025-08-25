@@ -1,7 +1,7 @@
 // Simplified PDF text extraction using pdftotext
 //
 // This module has been simplified to use only the pdftotext utility for all PDF text extraction.
-// Previous implementations using PDFium, OCR (TrOCR), and LayoutLM have been removed.
+// Previous implementations using OCR (TrOCR) and LayoutLM have been removed.
 // 
 // The pdftotext utility is called with the -layout flag to preserve formatting:
 // pdftotext -f [page] -l [page] -layout [pdf_path] -

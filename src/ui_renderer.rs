@@ -572,17 +572,6 @@ impl UIRenderer {
             eprintln!("[DEBUG] Sending Kitty image (first time only)");
             self.image_sent = true;
             
-            // Move image further down into the visible area
-            // Start at y+10 to ensure it's well within the panel
-            let image_y = y + 10;
-            let image_x = x + 2;
-            
-            // Move cursor to position
-            execute!(
-                stdout(),
-                MoveTo(image_x, image_y)
-            )?;
-            
             // Use inline Kitty implementation with correct protocol
             struct KittyImage;
             impl KittyImage {
@@ -666,13 +655,29 @@ impl UIRenderer {
                 }
             }
             
-            // Scale the image for display - smaller to reduce lag
-            let scale = 0.1; // 10% of original size to reduce data transfer
+            // Calculate scale to fit within the panel dimensions
+            // Similar to chonker7's approach - fit to available space
+            let panel_width = (width - 4) as f32;  // Account for padding
+            let panel_height = (height - 4) as f32;
+            let scale_x = panel_width / image.width() as f32;
+            let scale_y = panel_height / image.height() as f32;
+            let scale = scale_x.min(scale_y).min(0.8); // Max 80% to leave some margin
+            
             let display_width = (image.width() as f32 * scale) as u32;
             let display_height = (image.height() as f32 * scale) as u32;
             
+            // Center the image in the panel
+            let image_x = x + ((width - display_width as u16) / 2).max(2);
+            let image_y = y + ((height - display_height as u16) / 2).max(2);
+            
             eprintln!("[DEBUG] Original: {}x{}, Display: {}x{}, Position: ({}, {})", 
                      image.width(), image.height(), display_width, display_height, image_x, image_y);
+            
+            // Move cursor to position
+            execute!(
+                stdout(),
+                MoveTo(image_x, image_y)
+            )?;
             
             // Send image at fixed position within panel
             match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
@@ -978,10 +983,10 @@ impl UIRenderer {
         self.add_debug_message(msg.clone());
         eprintln!("[DEBUG] {}", msg);
         
-        // Render first page image with high resolution for beautiful display
+        // Render first page image - same size as chonker7
         self.add_debug_message("Rendering PDF with lopdf-vello-kitty...".to_string());
         eprintln!("[DEBUG] Rendering PDF with Vello GPU acceleration...");
-        let mut image = pdf_renderer::render_pdf_page(&pdf_path, 0, 2400, 3200)?;  // Higher res for crisp display
+        let mut image = pdf_renderer::render_pdf_page(&pdf_path, 0, 800, 1000)?;  // Same as chonker7
         
         // Apply dark mode filter for better visibility
         image = self.apply_dark_mode_filter(image);

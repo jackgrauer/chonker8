@@ -10,9 +10,3 @@ pub const GRID_HEIGHT: usize = 100;
 pub const MAX_CACHED_PAGES: usize = 5;
 pub const MAX_DEBUG_LOGS: usize = 1000;
 
-// Get library path from environment or use default
-pub fn pdfium_library_path() -> PathBuf {
-    env::var("CHONKER_PDFIUM_PATH")
-        .unwrap_or_else(|_| "./lib".to_string())
-        .into()
-}

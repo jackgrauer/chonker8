@@ -2,7 +2,7 @@ use anyhow::Result;
 use image::DynamicImage;
 use std::path::Path;
 
-// Use our Vello renderer instead of PDFium
+// Use our Vello renderer
 use crate::vello_pdf_renderer::VelloPdfRenderer;
 
 /// Render a PDF page to an image using Vello (GPU-accelerated on ARM/Metal)
@@ -19,10 +19,4 @@ pub fn render_pdf_page(pdf_path: &Path, page_num: usize, width: u32, height: u32
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<usize> {
     let renderer = VelloPdfRenderer::new(pdf_path)?;
     Ok(renderer.page_count())
-}
-
-/// Legacy PDFium compatibility function (deprecated)
-/// This is kept for backward compatibility but will panic if called
-pub fn get_pdfium_instance() -> ! {
-    panic!("PDFium has been replaced with Vello renderer. Update your code to use the new API.");
 }

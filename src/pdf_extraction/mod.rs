@@ -23,6 +23,5 @@ pub use extraction_router::{ExtractionRouter, ExtractionMethod, ExtractionResult
 
 // Note: The following exports are kept for compatibility but are not used:
 // - All ML-based extraction methods (OCR, LayoutLM, TrOCR)
-// - PDFium-based extraction
 // - Document AI processing
 // The system now exclusively uses pdftotext for all text extraction
