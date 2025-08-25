@@ -6,13 +6,13 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     execute,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
 };
 use std::io::{stdout, Write};
 use std::path::PathBuf;
 use image::{DynamicImage, ImageBuffer, Rgba};
-use crate::kitty_protocol::KittyProtocol;
+use crate::display::kitty_graphics::KittyProtocol;
 
 // Dark theme colors optimized for PDF comparison
 pub struct DarkTheme {

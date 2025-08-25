@@ -14,8 +14,8 @@ chonker8/
 │   └── status_bar/           // Bottom - page info
 │
 ├── pdf_extraction/           // How we get text from PDFs
-│   ├── basic.rs             // Fast but simple (PDFium)
-│   └── ai_powered.rs        // Smart but slow (Ferrules ML)
+│   ├── basic.rs             // Fast but simple (pdftoppm/pdftotext)
+│   └── ai_powered.rs        // Smart but slow (LayoutLM ML)
 │
 ├── controls/                 // User input
 │   ├── keyboard.rs          // Keyboard shortcuts
@@ -24,8 +24,7 @@ chonker8/
 ├── theme/                    // Colors and appearance
 │   └── colors.rs            // Soft palette (not electric!)
 │
-├── lib/                      // External libraries
-│   └── (pdfium, ferrules)
+├── lib/                      // NO EXTERNAL LIBRARIES NEEDED!
 │
 └── README.md                 // You are here!
 ```

@@ -1,17 +1,11 @@
 // Hot-reload TUI for chonker8
 // Main entry point that sets up the PDF viewer with hot-reload
 
-// Use the new module structure through path imports
-#[path = "core/config.rs"]
-mod ui_config;
-#[path = "display/terminal_ui.rs"]
-mod ui_renderer;
-#[path = "ml_extraction/mod.rs"]
-mod pdf_extraction;
-#[path = "core/old_config.rs"]
-mod config;
-#[path = "core/hot_reload.rs"]
-mod hot_reload_manager;
+// Use the library modules
+use chonker8::core::config as ui_config;
+use chonker8::display::terminal_ui as ui_renderer;
+use chonker8::ml_extraction as pdf_extraction;
+use chonker8::core::hot_reload as hot_reload_manager;
 
 use anyhow::Result;
 use clap::Parser;
@@ -271,42 +265,7 @@ impl App {
     }
     
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
-        // Check if we're on the DEBUG screen and handle scrolling
-        if *self.renderer.current_screen() == Screen::Debug {
-            match key.code {
-                KeyCode::Up => {
-                    self.renderer.scroll_debug_up();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::Down => {
-                    self.renderer.scroll_debug_down();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::PageUp => {
-                    self.renderer.scroll_debug_page_up();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::PageDown => {
-                    self.renderer.scroll_debug_page_down();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::Home => {
-                    self.renderer.scroll_debug_to_top();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::End => {
-                    self.renderer.scroll_debug_to_bottom();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
+        // Debug screen removed
         
         // Check if we're on the PDF viewer screen and handle scrolling
         let screen = self.renderer.current_screen();
@@ -384,35 +343,7 @@ impl App {
     }
     
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
-        // Handle mouse wheel scrolling on DEBUG screen
-        if *self.renderer.current_screen() == Screen::Debug {
-            match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    self.renderer.scroll_debug_up();
-                    self.needs_redraw = true;
-                }
-                MouseEventKind::ScrollDown => {
-                    self.renderer.scroll_debug_down();
-                    self.needs_redraw = true;
-                }
-                // Explicitly ignore all other mouse events to prevent terminal corruption
-                MouseEventKind::Moved => {
-                    // Ignore mouse movement
-                }
-                MouseEventKind::Down(_) => {
-                    // Ignore mouse button presses
-                }
-                MouseEventKind::Up(_) => {
-                    // Ignore mouse button releases
-                }
-                MouseEventKind::Drag(_) => {
-                    // Ignore mouse drag
-                }
-                _ => {
-                    // Ignore any other mouse events
-                }
-            }
-        }
+        // Debug screen removed
         
         // Handle mouse wheel scrolling on PDF viewer screen
         let screen = self.renderer.current_screen();

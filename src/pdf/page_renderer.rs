@@ -3,7 +3,7 @@ use image::DynamicImage;
 use std::path::Path;
 
 // Use system's pdftoppm for ACTUAL working PDF rendering
-use crate::system_pdf_renderer::SystemPdfRenderer;
+use crate::pdf::render_with_pdftoppm::SystemPdfRenderer;
 
 /// Render a PDF page to an image using the system's pdftoppm
 pub fn render_pdf_page(pdf_path: &Path, page_num: usize, width: u32, height: u32) -> Result<DynamicImage> {

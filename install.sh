@@ -27,8 +27,8 @@ if [ ! -f "ui.toml" ]; then
     cp "$CHONKER_HOME/ui.toml" . 2>/dev/null || true
 fi
 
-# Run chonker8 with proper library path
-DYLD_LIBRARY_PATH="$CHONKER_HOME/lib" "$CHONKER_HOME/target/release/chonker8-hot" "$@"
+# Run chonker8 - no external libraries needed!
+"$CHONKER_HOME/target/release/chonker8-hot" "$@"
 EOF
 
 chmod +x chonker8
@@ -47,7 +47,7 @@ echo ""
 
 # Option 3: Just create an alias
 echo "Option 3: Create an alias (add to ~/.zshrc or ~/.bashrc):"
-echo "  alias chonker8='DYLD_LIBRARY_PATH=$HOME/chonker8/lib $HOME/chonker8/target/release/chonker8-hot'"
+echo "  alias chonker8='$HOME/chonker8/target/release/chonker8-hot'"
 echo ""
 
 echo "✅ Build complete! Choose an installation option above."

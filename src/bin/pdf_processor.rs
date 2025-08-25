@@ -5,8 +5,7 @@ use std::{
     path::Path,
     io::{self, BufRead},
 };
-use chonker8::file_picker;
-use chonker8::pdf_extraction::{DocumentAnalyzer, ExtractionRouter};
+use chonker8::ml_extraction::{DocumentAnalyzer, ExtractionRouter};
 
 // This binary can be hot-reloaded independently of the main TUI
 fn main() -> Result<()> {
@@ -262,24 +261,7 @@ fn run_interactive_mode() -> Result<()> {
 }
 
 fn launch_file_picker() -> Result<()> {
-    println!("🚀 Launching Hot-Reload File Picker...");
-    
-    match file_picker::pick_pdf_file() {
-        Ok(Some(path)) => {
-            println!("✅ Selected: {}", path.display());
-            
-            // Show a preview of the selected file
-            println!("\n🔍 Processing selected file...");
-            let grid = process_page(&path, 1)?;
-            print_grid(&grid);
-        },
-        Ok(None) => {
-            println!("❌ No file selected or cancelled");
-        },
-        Err(e) => {
-            eprintln!("💥 File picker error: {}", e);
-        }
-    }
-    
+    println!("🚀 File picker removed - please specify a PDF path directly");
+    println!("Usage: pdf-processor process <pdf_path> <page>");
     Ok(())
 }

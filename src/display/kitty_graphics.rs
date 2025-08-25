@@ -61,8 +61,8 @@ impl KittyProtocol {
         image: &DynamicImage,
         x: u32,
         y: u32,
-        width: Option<u32>,
-        height: Option<u32>,
+        _width: Option<u32>,
+        _height: Option<u32>,
     ) -> Result<u32> {
         eprintln!("[KITTY] display_image called at ({}, {}) supported={}", x, y, self.supported);
         if !self.supported {

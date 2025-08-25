@@ -6,6 +6,7 @@
 pub mod core {
     pub mod config;
     pub mod hot_reload;
+    pub mod old_config;
 }
 
 // PDF processing - THIS IS WHAT WORKS!
@@ -40,3 +41,6 @@ pub use pdf::render_with_pdftoppm as system_pdf_renderer;
 pub use pdf::page_renderer as pdf_renderer;
 pub use pdf::extract_text as content_extractor;
 pub use display::theme;
+
+// Additional compatibility aliases
+pub use pdf::extract_text as pdf_extraction;

@@ -4,7 +4,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
 use chrono;
 use std::{
     path::Path,
-    process::{Command, Stdio},
+    process::Command,
     sync::mpsc::{channel, Receiver, Sender},
     thread,
     time::{Duration, Instant},
@@ -270,7 +270,7 @@ impl HotReloadManager {
         
         // Get current args
         let args: Vec<String> = env::args().collect();
-        let binary_path = &args[0];
+        let _binary_path = &args[0];
         
         // Re-exec with same args AND preserve Kitty environment
         let mut cmd = Command::new("./target/release/chonker8-hot");

@@ -1,5 +1,5 @@
 // Dynamic UI renderer that reads from hot-reloadable config
-use crate::ui_config::UIConfig;
+use crate::core::config::UIConfig;
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
@@ -7,18 +7,17 @@ use crossterm::{
     style::{Attribute, Attributes, Color, Print, ResetColor, SetAttributes, SetBackgroundColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
 };
-use std::io::{self, stdout, Write};
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use image::DynamicImage;
-use chonker8::integrated_file_picker::IntegratedFilePicker;
-use chonker8::{pdf_renderer, content_extractor};
-use chonker8::kitty_protocol::KittyProtocol;
+use crate::display::file_browser::IntegratedFilePicker;
+use crate::pdf::{page_renderer as pdf_renderer, extract_text as content_extractor};
+use crate::display::kitty_graphics::KittyProtocol;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
     FilePicker,
     PdfViewer,
-    Debug,
 }
 
 pub struct UIRenderer {
@@ -80,7 +79,7 @@ impl UIRenderer {
             cursor_x: 0,
             cursor_y: 0,
             current_screen: Screen::FilePicker,
-            available_screens: vec![Screen::FilePicker, Screen::PdfViewer, Screen::Debug],
+            available_screens: vec![Screen::FilePicker, Screen::PdfViewer],
             file_picker,
             current_pdf_path: None,
             current_pdf_image: None,
@@ -135,42 +134,7 @@ impl UIRenderer {
         }
     }
     
-    pub fn load_debug_log(&mut self) {
-        // Read any new messages from the debug log file
-        if let Ok(contents) = std::fs::read_to_string("/tmp/chonker8_debug.log") {
-            for line in contents.lines() {
-                // Check if we already have this message (avoid duplicates)
-                if !self.debug_messages.contains(&line.to_string()) {
-                    self.debug_messages.push(line.to_string());
-                }
-            }
-            
-            // Keep only last 1000 messages
-            if self.debug_messages.len() > 1000 {
-                self.debug_messages.drain(0..self.debug_messages.len() - 1000);
-            }
-            
-            // Don't clear the log file - let it accumulate and rely on deduplication
-            // This ensures build warnings persist across multiple reads
-        }
-    }
     
-    fn get_message_color(&self, message: &str) -> Color {
-        // Simple syntax highlighting based on message content
-        if message.contains("ERROR") || message.contains("failed") || message.contains("error:") {
-            Color::Red
-        } else if message.contains("WARNING") || message.contains("warning:") {
-            Color::Yellow
-        } else if message.contains("SUCCESS") || message.contains("successful") || message.contains("complete") {
-            Color::Green
-        } else if message.contains("[EXTRACTION]") || message.contains("[RUNTIME]") {
-            Color::Cyan
-        } else if message.contains("[BUILD]") {
-            Color::Blue
-        } else {
-            Color::White
-        }
-    }
     
     pub fn render(&mut self) -> Result<()> {
         eprintln!("[DEBUG] render() called, current_screen: {:?}", self.current_screen);
@@ -182,7 +146,6 @@ impl UIRenderer {
                 eprintln!("[DEBUG] Calling render_pdf_screen()");
                 self.render_pdf_screen()
             },
-            Screen::Debug => self.render_debug_screen(),
         };
         eprintln!("[DEBUG] render() complete, result: {:?}", result.is_ok());
         result
@@ -192,7 +155,6 @@ impl UIRenderer {
         match self.current_screen {
             Screen::FilePicker => self.render_integrated_file_picker_screen(file_picker),
             Screen::PdfViewer => self.render_pdf_screen(),
-            Screen::Debug => self.render_debug_screen(),
         }
     }
     
@@ -339,6 +301,8 @@ impl UIRenderer {
         Ok(())
     }
     
+    /*
+    // Debug screen removed - keeping skeleton for potential future use
     fn render_debug_screen(&mut self) -> Result<()> {
         let (width, height) = terminal::size()?;
         
@@ -448,7 +412,7 @@ impl UIRenderer {
         stdout().flush()?;
         Ok(())
     }
-    
+    */
     
     fn render_pdf_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
@@ -809,11 +773,6 @@ impl UIRenderer {
     
     pub fn scroll_up(&mut self) {
         match self.current_screen {
-            Screen::Debug => {
-                if self.debug_scroll_offset > 0 {
-                    self.debug_scroll_offset -= 1;
-                }
-            }
             _ => {
                 // Larger scroll steps for PDF image viewing
                 if self.scroll_offset > 0 {
@@ -825,11 +784,6 @@ impl UIRenderer {
     
     pub fn scroll_down(&mut self) {
         match self.current_screen {
-            Screen::Debug => {
-                if self.debug_scroll_offset < self.debug_messages.len().saturating_sub(10) {
-                    self.debug_scroll_offset += 1;
-                }
-            }
             _ => {
                 // Larger scroll steps for PDF image viewing (up to 100 to see off-screen images)
                 if self.scroll_offset < 100 {
@@ -875,44 +829,9 @@ impl UIRenderer {
     }
     
     pub fn set_screen(&mut self, screen: Screen) {
-        // If switching to debug screen and messages haven't been loaded yet, load them
-        if screen == Screen::Debug && !self.debug_messages_loaded {
-            self.load_debug_log();
-            self.debug_messages_loaded = true;
-        }
         self.current_screen = screen;
     }
     
-    // Debug screen scrolling methods
-    pub fn scroll_debug_up(&mut self) {
-        if self.debug_scroll_offset > 0 {
-            self.debug_scroll_offset -= 1;
-        }
-    }
-    
-    pub fn scroll_debug_down(&mut self) {
-        let max_offset = self.get_debug_max_scroll_offset();
-        if self.debug_scroll_offset < max_offset {
-            self.debug_scroll_offset += 1;
-        }
-    }
-    
-    pub fn scroll_debug_page_up(&mut self) {
-        self.debug_scroll_offset = self.debug_scroll_offset.saturating_sub(10);
-    }
-    
-    pub fn scroll_debug_page_down(&mut self) {
-        let max_offset = self.get_debug_max_scroll_offset();
-        self.debug_scroll_offset = (self.debug_scroll_offset + 10).min(max_offset);
-    }
-    
-    pub fn scroll_debug_to_top(&mut self) {
-        self.debug_scroll_offset = 0;
-    }
-    
-    pub fn scroll_debug_to_bottom(&mut self) {
-        self.debug_scroll_offset = self.get_debug_max_scroll_offset();
-    }
     
     fn get_debug_max_scroll_offset(&self) -> usize {
         // Calculate the visible height for debug content
@@ -959,12 +878,11 @@ impl UIRenderer {
         match self.current_screen {
             Screen::FilePicker => "File Picker", 
             Screen::PdfViewer => "PDF Viewer",
-            Screen::Debug => "Debug",
         }
     }
     
     pub fn load_pdf(&mut self, pdf_path: PathBuf) -> Result<()> {
-        use crate::pdf_extraction::{DocumentAnalyzer, PageFingerprint};
+        use crate::ml_extraction::{DocumentAnalyzer, PageFingerprint};
         
         // Clear debug messages for new PDF load
         self.debug_messages.clear();
@@ -1044,19 +962,19 @@ impl UIRenderer {
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).to_string();
                 eprintln!("[DEBUG] pdftotext extracted {} characters", text.len());
-                crate::pdf_extraction::ExtractionResult {
+                crate::ml_extraction::ExtractionResult {
                     text,
                     quality_score: 0.8,
-                    method: crate::pdf_extraction::ExtractionMethod::PdfToText,
+                    method: crate::ml_extraction::ExtractionMethod::PdfToText,
                     extraction_time_ms: 0,
                 }
             }
             _ => {
                 eprintln!("[WARNING] pdftotext failed, using fallback");
-                crate::pdf_extraction::ExtractionResult {
+                crate::ml_extraction::ExtractionResult {
                     text: "Text extraction failed - pdftotext not available".to_string(),
                     quality_score: 0.0,
-                    method: crate::pdf_extraction::ExtractionMethod::PdfToText,
+                    method: crate::ml_extraction::ExtractionMethod::PdfToText,
                     extraction_time_ms: 0,
                 }
             }

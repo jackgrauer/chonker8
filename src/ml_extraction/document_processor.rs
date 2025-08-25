@@ -142,7 +142,7 @@ impl DocumentProcessor {
         
         // Run encoder
         let input = Value::from_array(([1_usize, 3, 384, 384], pixels.into_boxed_slice()))?;
-        let encoder_outputs = encoder.run(inputs![input])?;
+        let _encoder_outputs = encoder.run(inputs![input])?;
         
         // TODO: Run decoder for actual text generation
         // For now, return placeholder

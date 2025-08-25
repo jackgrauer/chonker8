@@ -2,7 +2,6 @@
 use anyhow::{Result, anyhow};
 use lopdf::{Document, Object, Dictionary};
 use std::path::Path;
-use std::collections::BTreeMap;
 
 pub async fn extract_to_matrix(
     pdf_path: &Path,
