@@ -65,3 +65,7 @@ path = "src/bin/test_extraction.rs"
 [[bin]]
 name = "chonker8-demo"
 path = "src/bin/chonker8_demo.rs"
+
+[[bin]]
+name = "excel-grid-demo"
+path = "src/bin/excel_grid_demo.rs"

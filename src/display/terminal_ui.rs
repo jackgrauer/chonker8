@@ -13,6 +13,7 @@ use image::DynamicImage;
 use crate::display::file_browser::IntegratedFilePicker;
 use crate::pdf::{page_renderer as pdf_renderer, extract_text as content_extractor};
 use crate::display::kitty_graphics::KittyProtocol;
+use crate::display::excel_grid::ExcelGrid;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -23,6 +24,7 @@ pub enum Screen {
 pub struct UIRenderer {
     config: UIConfig,
     pdf_content: Vec<Vec<char>>,
+    excel_grid: ExcelGrid,  // Excel-style editable grid
     current_page: usize,
     total_pages: usize,
     scroll_offset: usize,
@@ -31,7 +33,7 @@ pub struct UIRenderer {
     current_screen: Screen,
     available_screens: Vec<Screen>,
     file_picker: Option<IntegratedFilePicker>,
-    current_pdf_path: Option<PathBuf>,
+    pub current_pdf_path: Option<PathBuf>,
     current_pdf_image: Option<DynamicImage>,
     dark_mode: bool,
     extraction_method: Option<String>,
@@ -73,6 +75,7 @@ impl UIRenderer {
         Self {
             config,
             pdf_content: vec![vec![' '; 80]; 24], // Default empty content
+            excel_grid: ExcelGrid::new(80, 50),  // Initialize Excel grid
             current_page: 1,
             total_pages: 1,
             scroll_offset: 0,
@@ -685,36 +688,110 @@ impl UIRenderer {
     
     
     fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
-        
-        // Extract text from pdf_content
-        let text: String = self.pdf_content
-            .iter()
-            .map(|row| row.iter().collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n");
-        
-        let lines: Vec<String> = if self.config.panels.text.wrap_text {
-            // Simple word wrapping
-            text.split('\n').flat_map(|line| {
-                line.chars()
-                    .collect::<Vec<_>>()
-                    .chunks(width as usize)
-                    .map(|chunk| chunk.iter().collect::<String>())
-                    .collect::<Vec<_>>()
-            }).collect()
-        } else {
-            text.lines().map(|s| s.to_string()).collect()
-        };
-        
-        for (i, line) in lines.iter().skip(self.scroll_offset).take(height as usize).enumerate() {
-            let display_line = if self.config.panels.text.line_numbers {
-                format!("{:4} {}", self.scroll_offset + i + 1, line)
-            } else {
-                line.to_string()
-            };
+        // Render the Excel grid with block selection
+        for row in 0..height.min(self.excel_grid.cells.len() as u16) {
+            execute!(stdout(), MoveTo(x, y + row))?;
             
-            execute!(stdout(), MoveTo(x, y + i as u16), Print(&display_line))?;
+            // Line numbers
+            if self.config.panels.text.line_numbers && width > 5 {
+                execute!(
+                    stdout(),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(format!("{:4}│", row + self.scroll_offset as u16 + 1)),
+                    ResetColor,
+                )?;
+                
+                // Grid content
+                let text_start = 5;
+                let text_width = width - text_start;
+                
+                for col in 0..text_width.min(self.excel_grid.width as u16) {
+                    let grid_row = (row + self.scroll_offset as u16) as usize;
+                    let grid_col = col as usize;
+                    
+                    let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
+                    let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
+                    
+                    // Apply colors for selection and cursor
+                    if is_cursor && !self.excel_grid.selecting {
+                        execute!(
+                            stdout(),
+                            SetBackgroundColor(Color::Rgb { r: 255, g: 255, b: 100 }),
+                            SetForegroundColor(Color::Black),
+                        )?;
+                    } else if is_selected {
+                        execute!(
+                            stdout(),
+                            SetBackgroundColor(Color::Rgb { r: 40, g: 60, b: 120 }),
+                            SetForegroundColor(Color::White),
+                        )?;
+                    } else if is_cursor {
+                        execute!(
+                            stdout(),
+                            SetBackgroundColor(Color::Rgb { r: 60, g: 90, b: 180 }),
+                            SetForegroundColor(Color::White),
+                        )?;
+                    } else {
+                        execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
+                    }
+                    
+                    // Print character
+                    let ch = if grid_row < self.excel_grid.cells.len() && grid_col < self.excel_grid.cells[grid_row].len() {
+                        self.excel_grid.cells[grid_row][grid_col]
+                    } else {
+                        ' '
+                    };
+                    
+                    execute!(stdout(), Print(ch))?;
+                    
+                    if is_cursor || is_selected {
+                        execute!(stdout(), ResetColor)?;
+                    }
+                }
+            } else {
+                // No line numbers - render grid directly
+                for col in 0..width.min(self.excel_grid.width as u16) {
+                    let grid_row = (row + self.scroll_offset as u16) as usize;
+                    let grid_col = col as usize;
+                    
+                    let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
+                    let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
+                    
+                    if is_cursor && !self.excel_grid.selecting {
+                        execute!(
+                            stdout(),
+                            SetBackgroundColor(Color::Rgb { r: 255, g: 255, b: 100 }),
+                            SetForegroundColor(Color::Black),
+                        )?;
+                    } else if is_selected {
+                        execute!(
+                            stdout(),
+                            SetBackgroundColor(Color::Rgb { r: 40, g: 60, b: 120 }),
+                            SetForegroundColor(Color::White),
+                        )?;
+                    } else if is_cursor {
+                        execute!(
+                            stdout(),
+                            SetBackgroundColor(Color::Rgb { r: 60, g: 90, b: 180 }),
+                            SetForegroundColor(Color::White),
+                        )?;
+                    } else {
+                        execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
+                    }
+                    
+                    let ch = if grid_row < self.excel_grid.cells.len() && grid_col < self.excel_grid.cells[grid_row].len() {
+                        self.excel_grid.cells[grid_row][grid_col]
+                    } else {
+                        ' '
+                    };
+                    
+                    execute!(stdout(), Print(ch))?;
+                    
+                    if is_cursor || is_selected {
+                        execute!(stdout(), ResetColor)?;
+                    }
+                }
+            }
         }
         
         Ok(())
@@ -846,6 +923,28 @@ impl UIRenderer {
         } else {
             self.debug_messages.len() - content_height
         }
+    }
+    
+    /// Handle keyboard input for Excel grid editing
+    pub fn handle_excel_grid_input(&mut self, key: crossterm::event::KeyCode, shift: bool) {
+        self.excel_grid.handle_key(key, shift);
+    }
+    
+    /// Check if Excel grid is in selection mode
+    pub fn is_selecting(&self) -> bool {
+        self.excel_grid.selecting
+    }
+    
+    /// Get Excel grid cursor position
+    pub fn get_grid_cursor(&self) -> (usize, usize) {
+        self.excel_grid.cursor
+    }
+    
+    /// Save the edited text to a file
+    pub fn save_edited_text(&self, path: &PathBuf) -> Result<()> {
+        let content = self.excel_grid.to_string();
+        std::fs::write(path, content)?;
+        Ok(())
     }
     
     pub fn handle_file_picker_input(&mut self, key: crossterm::event::KeyEvent) -> Result<Option<String>> {
@@ -1026,6 +1125,9 @@ impl UIRenderer {
         
         // Convert extracted text to grid format for display
         let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);
+        
+        // Update Excel grid with the extracted text
+        self.excel_grid = ExcelGrid::from_pdftext(&text_with_metadata, 80);
         
         // Update state
         self.current_pdf_path = Some(pdf_path);

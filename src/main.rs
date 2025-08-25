@@ -11,7 +11,7 @@ use anyhow::Result;
 use clap::Parser;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyEvent, MouseEvent, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
     execute,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -267,32 +267,37 @@ impl App {
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         // Debug screen removed
         
-        // Check if we're on the PDF viewer screen and handle scrolling
+        // Check if we're on the PDF viewer screen and handle scrolling/editing
         let screen = self.renderer.current_screen();
         if *screen == Screen::PdfViewer {
+            // Check for special control keys first
             match key.code {
-                KeyCode::Up => {
-                    self.renderer.scroll_up();
+                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Toggle Excel grid block selection mode
+                    self.renderer.handle_excel_grid_input(KeyCode::Char('v'), false);
                     self.needs_redraw = true;
                     return Ok(());
                 }
-                KeyCode::Down => {
-                    self.renderer.scroll_down();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::PageUp => {
-                    self.renderer.prev_page();
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::PageDown => {
-                    self.renderer.next_page();
-                    self.needs_redraw = true;
+                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Save edited text
+                    if let Some(pdf_path) = self.renderer.current_pdf_path.clone() {
+                        let txt_path = pdf_path.with_extension("edited.txt");
+                        if let Err(e) = self.renderer.save_edited_text(&txt_path) {
+                            eprintln!("Failed to save: {}", e);
+                        } else {
+                            eprintln!("Saved edited text to {:?}", txt_path);
+                        }
+                    }
                     return Ok(());
                 }
                 _ => {}
             }
+            
+            // Pass keyboard input to Excel grid for editing
+            let shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
+            self.renderer.handle_excel_grid_input(key.code, shift_held);
+            self.needs_redraw = true;
+            return Ok(());
         }
         
         // Check if we're on the file picker screen and handle file picker input

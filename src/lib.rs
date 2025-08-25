@@ -21,9 +21,11 @@ pub mod display {
     pub mod kitty_graphics;
     pub mod kitty_helpers;
     pub mod ab_comparison_ui;
+    pub mod ab_comparison_excel;
     pub mod terminal_ui;
     pub mod file_browser;
     pub mod theme;
+    pub mod excel_grid;
 }
 
 // Machine learning extraction (future work)
