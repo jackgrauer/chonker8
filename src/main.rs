@@ -289,32 +289,25 @@ impl App {
                 _ => {}
             }
             
-            // Then check for special control keys
-            match key.code {
-                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    // Toggle Excel grid block selection mode
-                    self.renderer.handle_excel_grid_input(KeyCode::Char('v'), false);
-                    self.needs_redraw = true;
-                    return Ok(());
-                }
-                KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    // Save edited text
-                    if let Some(pdf_path) = self.renderer.current_pdf_path.clone() {
-                        let txt_path = pdf_path.with_extension("edited.txt");
-                        if let Err(e) = self.renderer.save_edited_text(&txt_path) {
-                            eprintln!("Failed to save: {}", e);
-                        } else {
-                            eprintln!("Saved edited text to {:?}", txt_path);
-                        }
+            // Check for special control key that we handle directly (Save)
+            if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                // Save edited text
+                if let Some(pdf_path) = self.renderer.current_pdf_path.clone() {
+                    let txt_path = pdf_path.with_extension("edited.txt");
+                    if let Err(e) = self.renderer.save_edited_text(&txt_path) {
+                        eprintln!("Failed to save: {}", e);
+                    } else {
+                        eprintln!("Saved edited text to {:?}", txt_path);
                     }
-                    return Ok(());
                 }
-                _ => {}
+                return Ok(());
             }
             
-            // Pass other keyboard input to Excel grid for editing
+            // Pass all keyboard input to Excel grid for advanced editing
             let shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
-            self.renderer.handle_excel_grid_input(key.code, shift_held);
+            let ctrl_held = key.modifiers.contains(KeyModifiers::CONTROL);
+            let alt_held = key.modifiers.contains(KeyModifiers::ALT);
+            self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
             self.needs_redraw = true;
             return Ok(());
         }

@@ -3,8 +3,9 @@
 
 use crossterm::event::KeyCode;
 use std::cmp::{min, max};
+use arboard::Clipboard;
+use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone)]
 pub struct ExcelGrid {
     pub cells: Vec<Vec<char>>,
     pub cursor: (usize, usize),  // (col, row)
@@ -12,6 +13,38 @@ pub struct ExcelGrid {
     pub anchor: (usize, usize),   // selection start point
     pub width: usize,
     pub height: usize,
+    clipboard: Option<Arc<Mutex<Clipboard>>>,
+    status_message: Option<String>,
+}
+
+impl Clone for ExcelGrid {
+    fn clone(&self) -> Self {
+        // Create a new clipboard instance for the clone
+        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
+        Self {
+            cells: self.cells.clone(),
+            cursor: self.cursor,
+            selecting: self.selecting,
+            anchor: self.anchor,
+            width: self.width,
+            height: self.height,
+            clipboard,
+            status_message: self.status_message.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ExcelGrid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExcelGrid")
+            .field("cursor", &self.cursor)
+            .field("selecting", &self.selecting)
+            .field("anchor", &self.anchor)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("status_message", &self.status_message)
+            .finish()
+    }
 }
 
 impl Default for ExcelGrid {
@@ -20,9 +53,19 @@ impl Default for ExcelGrid {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SelectionMode {
+    Character,
+    Word,
+    Line,
+    Block,
+    All,
+}
+
 impl ExcelGrid {
     pub fn new(width: usize, height: usize) -> Self {
         let cells = vec![vec![' '; width]; height];
+        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
         Self {
             cells,
             cursor: (0, 0),
@@ -30,6 +73,8 @@ impl ExcelGrid {
             anchor: (0, 0),
             width,
             height,
+            clipboard,
+            status_message: None,
         }
     }
     
@@ -37,11 +82,15 @@ impl ExcelGrid {
     pub fn from_pdftext(text: &str, width: usize) -> Self {
         let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
         let height = lines.len().max(24);
+        eprintln!("[DEBUG] Loading {} lines into Excel grid (height={})", lines.len(), height);
         
         let mut cells = Vec::with_capacity(height);
-        for line in lines.iter() {
+        for (idx, line) in lines.iter().enumerate() {
             let mut row: Vec<char> = line.chars().collect();
             row.resize(width, ' ');
+            if idx < 3 {
+                eprintln!("[DEBUG] Line {}: '{}'", idx, line.chars().take(40).collect::<String>());
+            }
             cells.push(row);
         }
         
@@ -51,6 +100,7 @@ impl ExcelGrid {
         }
         
         let grid_height = cells.len();
+        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
         
         Self {
             cells,
@@ -59,53 +109,91 @@ impl ExcelGrid {
             anchor: (0, 0),
             width,
             height: grid_height,
+            clipboard,
+            status_message: None,
         }
     }
     
-    /// Handle keyboard input
-    pub fn handle_key(&mut self, key: KeyCode, shift_held: bool) {
+    /// Handle keyboard input with modifiers
+    pub fn handle_key_with_modifiers(&mut self, key: KeyCode, shift: bool, ctrl: bool, alt: bool) {
         match key {
-            // Toggle selection mode with Ctrl+V (visual block mode)
-            KeyCode::Char('v') if !shift_held => {
-                self.selecting = !self.selecting;
-                if self.selecting {
-                    self.anchor = self.cursor;
-                }
+            // Basic cut/copy/paste only
+            KeyCode::Char('c') if ctrl => {
+                self.copy_to_clipboard();
             }
             
-            // Movement keys
+            KeyCode::Char('x') if ctrl => {
+                self.cut_to_clipboard();
+            }
+            
+            KeyCode::Char('v') if ctrl => {
+                self.paste_from_clipboard();
+            }
+            
+            // Simple arrow key movement
             KeyCode::Up => {
-                if shift_held && !self.selecting {
+                if shift && !self.selecting {
                     self.selecting = true;
                     self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
+                    eprintln!("[DEBUG] Started selection at ({},{})", self.anchor.0, self.anchor.1);
                 }
                 self.cursor.1 = self.cursor.1.saturating_sub(1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                    eprintln!("[DEBUG] Selection active: ({},{}) to ({},{}) | selecting={}", x1, y1, x2, y2, self.selecting);
+                } else if !shift {
+                    self.selecting = false;
+                }
             }
             KeyCode::Down => {
-                if shift_held && !self.selecting {
+                if shift && !self.selecting {
                     self.selecting = true;
                     self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
                 }
                 self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
             }
             KeyCode::Left => {
-                if shift_held && !self.selecting {
+                if shift && !self.selecting {
                     self.selecting = true;
                     self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
                 }
                 self.cursor.0 = self.cursor.0.saturating_sub(1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
             }
             KeyCode::Right => {
-                if shift_held && !self.selecting {
+                if shift && !self.selecting {
                     self.selecting = true;
                     self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
                 }
                 self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
             }
             
             // Escape cancels selection
             KeyCode::Esc => {
                 self.selecting = false;
+                self.status_message = Some("Selection cancelled".to_string());
             }
             
             // Delete/Backspace
@@ -125,8 +213,9 @@ impl ExcelGrid {
                 }
             }
             
-            // Character input
-            KeyCode::Char(c) => {
+            // Character input - handle both ctrl shortcuts and regular typing
+            KeyCode::Char(c) if !ctrl => {
+                // Regular typing (not a ctrl shortcut)
                 if self.selecting {
                     // Replace all characters in selected block
                     let (x1, y1, x2, y2) = self.get_selection_bounds();
@@ -138,6 +227,7 @@ impl ExcelGrid {
                         }
                     }
                     self.selecting = false;
+                    self.status_message = Some(format!("Replaced selection with '{}'", c));
                 } else {
                     // Type at cursor
                     if self.cursor.1 < self.cells.len() && self.cursor.0 < self.cells[self.cursor.1].len() {
@@ -164,6 +254,12 @@ impl ExcelGrid {
                     }
                     self.cursor.0 = 0;
                 }
+            }
+            
+            // Enter key - move to next line
+            KeyCode::Enter => {
+                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
+                self.cursor.0 = 0;
             }
             
             // Page Up/Down
@@ -207,7 +303,12 @@ impl ExcelGrid {
             return false;
         }
         let (x1, y1, x2, y2) = self.get_selection_bounds();
-        x >= x1 && x <= x2 && y >= y1 && y <= y2
+        let selected = x >= x1 && x <= x2 && y >= y1 && y <= y2;
+        if selected && x == x1 && y == y1 {
+            // Log once per selection area
+            eprintln!("[DEBUG] Cell ({},{}) is selected (bounds: {},{} to {},{})", x, y, x1, y1, x2, y2);
+        }
+        selected
     }
     
     /// Get the content as a string
@@ -217,6 +318,58 @@ impl ExcelGrid {
             .map(|row| row.iter().collect::<String>().trim_end().to_string())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+    
+    /// Handle keyboard input (backward compatibility wrapper)
+    pub fn handle_key(&mut self, key: KeyCode, shift_held: bool) {
+        self.handle_key_with_modifiers(key, shift_held, false, false);
+    }
+    
+    
+    /// Copy selection to system clipboard
+    pub fn copy_to_clipboard(&mut self) {
+        let text = self.copy_selection();
+        if !text.is_empty() {
+            if let Some(clipboard) = self.clipboard.clone() {
+                if let Ok(mut clip) = clipboard.lock() {
+                    if clip.set_text(&text).is_ok() {
+                        self.status_message = Some(format!("Copied {} chars", text.len()));
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Cut selection to clipboard
+    pub fn cut_to_clipboard(&mut self) {
+        self.copy_to_clipboard();
+        if self.selecting {
+            self.clear_selection();
+            self.status_message = Some("Cut to clipboard".to_string());
+        }
+    }
+    
+    /// Paste from system clipboard
+    pub fn paste_from_clipboard(&mut self) {
+        if let Some(clipboard) = self.clipboard.clone() {
+            if let Ok(mut clip) = clipboard.lock() {
+                if let Ok(text) = clip.get_text() {
+                    self.paste_text(&text);
+                    self.status_message = Some(format!("Pasted {} chars", text.len()));
+                }
+            }
+        }
+    }
+    
+    
+    /// Get current status message
+    pub fn get_status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
+    }
+    
+    /// Clear status message
+    pub fn clear_status_message(&mut self) {
+        self.status_message = None;
     }
     
     /// Insert text at cursor position

@@ -1,33 +1,54 @@
-# ⛔ ABSOLUTELY NO PDFIUM ⛔
+# ⛔ FORBIDDEN LIBRARY - NEVER USE ⛔
 
-## DO NOT USE PDFIUM IN THIS PROJECT
+## System Tools Only - Poppler Suite
 
-**PDFium has been permanently removed from this codebase.**
+This project uses **ONLY** system tools from the Poppler suite:
+- `pdftoppm` - Converts PDF pages to images
+- `pdftotext` - Extracts text with spatial layout
+- `pdfinfo` - Gets PDF metadata
 
-### Why No PDFium?
-1. **Build complexity** - Requires DYLD_LIBRARY_PATH and external C++ libraries
-2. **Not needed** - We use system's `pdftoppm` from Poppler which works perfectly
-3. **Proven solution** - pdftoppm has worked since we fixed Kitty protocol parameters
+## How to Run This App
 
-### What We Use Instead
-- **PDF Rendering**: `pdftoppm` (part of Poppler suite, pre-installed on most systems)
-- **Text Extraction**: `pdftotext` (also from Poppler)
-- **Page Counting**: `pdfinfo` (also from Poppler) with lopdf fallback
+```bash
+# CORRECT - Direct execution, no library paths needed
+./target/release/chonker8-hot your.pdf
+cargo run --release --bin chonker8-hot your.pdf
 
-### The Fix That Made Everything Work
-The issue was never about PDF rendering - it was the Kitty graphics protocol parameters:
-- ❌ WRONG: `s=/v=` (pixel dimensions)  
-- ✅ CORRECT: `c=/r=` (cell dimensions)
+# WRONG - Never use DYLD_LIBRARY_PATH
+# If you see DYLD_LIBRARY_PATH anywhere, DELETE IT
+```
 
-### DO NOT:
-- Add pdfium_render crate
-- Add any DYLD_LIBRARY_PATH requirements
-- Try to link C++ PDF libraries
-- Attempt to render PDFs in Rust directly
+## The Only Way That Works
 
-### DO:
-- Keep using pdftoppm via Command::new()
-- Keep the SystemPdfRenderer 
-- Use Poppler tools (pdftoppm, pdftotext, pdfinfo)
+The Kitty graphics protocol requires cell-based dimensions:
+- ✅ CORRECT: `c=` (columns) and `r=` (rows) 
+- ❌ WRONG: Never use pixel dimensions
 
-**This file exists to prevent PDFium from ever coming back.**
+## Implementation
+
+```rust
+// This is the ONLY way to handle PDFs in this project
+Command::new("pdftoppm")
+    .args(&["-png", "-f", &page.to_string(), "-l", &page.to_string()])
+    .arg(&pdf_path)
+    .output()
+
+Command::new("pdftotext")
+    .args(&["-layout", "-f", &page.to_string(), "-l", &page.to_string()])
+    .arg(&pdf_path)
+    .arg("-")
+    .output()
+```
+
+## Absolute Rules
+
+1. **NO external PDF libraries** - System tools only
+2. **NO DYLD_LIBRARY_PATH** - Never needed, delete on sight
+3. **NO C++ dependencies** - Pure Rust + system commands
+4. **NO alternative PDF solutions** - Poppler works perfectly
+
+## If Someone Suggests PDF Libraries
+
+The answer is always: **"We use Poppler system tools exclusively. They work perfectly."**
+
+This is not negotiable. This is the way.

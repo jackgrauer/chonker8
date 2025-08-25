@@ -38,6 +38,9 @@ dirs = "5.0"
 chrono = "0.4"
 once_cell = "1.19"
 
+# Clipboard support
+arboard = "3.3"
+
 # PDF display
 viuer = "0.7"
 image_0_24 = { package = "image", version = "0.24" }

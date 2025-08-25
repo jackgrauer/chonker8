@@ -305,15 +305,25 @@ impl UIRenderer {
         // Render text extraction on right side using the Excel grid
         self.render_text_content(split_x + 2, 2, width - split_x - 4, height - 4)?;
         
-        // Status bar
-        let status_text = if let Some(path) = &self.current_pdf_path {
-            format!("PDF: {} | Page: {}/{} | Tab: Cycle • Esc: Exit", 
+        // Status bar with Excel grid status
+        let mut status_text = if let Some(path) = &self.current_pdf_path {
+            format!("PDF: {} | Page: {}/{}", 
                 path.file_name().unwrap_or_default().to_string_lossy(),
                 self.current_page, 
                 self.total_pages)
         } else {
-            "PDF - TEST Screen | Tab: Cycle • Esc: Exit".to_string()
+            "PDF - TEST Screen".to_string()
         };
+        
+        // Add Excel grid status message if available
+        if let Some(msg) = self.excel_grid.get_status_message() {
+            status_text.push_str(&format!(" | {}", msg));
+        } else {
+            // Show basic shortcuts only
+            status_text.push_str(" | ^C:Copy ^X:Cut ^V:Paste");
+        }
+        
+        status_text.push_str(" | Tab:Switch • Esc:Exit");
         
         execute!(
             stdout(),
@@ -717,7 +727,7 @@ impl UIRenderer {
                 execute!(
                     stdout(),
                     SetForegroundColor(Color::DarkGrey),
-                    Print(format!("{:4}│", row + self.scroll_offset as u16 + 1)),
+                    Print(format!("{:4}│", row + 1)),  // Line numbers start at 1
                     ResetColor,
                 )?;
                 
@@ -726,30 +736,39 @@ impl UIRenderer {
                 let text_width = width - text_start;
                 
                 for col in 0..text_width.min(self.excel_grid.width as u16) {
-                    let grid_row = (row + self.scroll_offset as u16) as usize;
+                    let grid_row = row as usize;  // Don't add scroll_offset - excel grid handles its own coordinates
                     let grid_col = col as usize;
                     
                     let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
                     let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
                     
+                    // Debug first few cells
+                    if grid_row == 0 && grid_col < 5 && (is_cursor || is_selected) {
+                        eprintln!("[RENDER] Cell ({},{}) cursor={} selected={} selecting={}", 
+                                 grid_col, grid_row, is_cursor, is_selected, self.excel_grid.selecting);
+                    }
+                    
                     // Apply colors for selection and cursor
                     if is_cursor && !self.excel_grid.selecting {
+                        // Bright yellow cursor when not selecting
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Rgb { r: 255, g: 255, b: 100 }),
+                            SetBackgroundColor(Color::Yellow),
                             SetForegroundColor(Color::Black),
                         )?;
                     } else if is_selected {
+                        // Blue background for selected text
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Rgb { r: 40, g: 60, b: 120 }),
+                            SetBackgroundColor(Color::Blue),
                             SetForegroundColor(Color::White),
                         )?;
                     } else if is_cursor {
+                        // Cyan cursor when selecting
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Rgb { r: 60, g: 90, b: 180 }),
-                            SetForegroundColor(Color::White),
+                            SetBackgroundColor(Color::Cyan),
+                            SetForegroundColor(Color::Black),
                         )?;
                     } else {
                         execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
@@ -771,29 +790,32 @@ impl UIRenderer {
             } else {
                 // No line numbers - render grid directly
                 for col in 0..width.min(self.excel_grid.width as u16) {
-                    let grid_row = (row + self.scroll_offset as u16) as usize;
+                    let grid_row = row as usize;  // Don't add scroll_offset - excel grid handles its own coordinates
                     let grid_col = col as usize;
                     
                     let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
                     let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
                     
                     if is_cursor && !self.excel_grid.selecting {
+                        // Bright yellow cursor when not selecting
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Rgb { r: 255, g: 255, b: 100 }),
+                            SetBackgroundColor(Color::Yellow),
                             SetForegroundColor(Color::Black),
                         )?;
                     } else if is_selected {
+                        // Blue background for selected text
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Rgb { r: 40, g: 60, b: 120 }),
+                            SetBackgroundColor(Color::Blue),
                             SetForegroundColor(Color::White),
                         )?;
                     } else if is_cursor {
+                        // Cyan cursor when selecting
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Rgb { r: 60, g: 90, b: 180 }),
-                            SetForegroundColor(Color::White),
+                            SetBackgroundColor(Color::Cyan),
+                            SetForegroundColor(Color::Black),
                         )?;
                     } else {
                         execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
@@ -950,6 +972,14 @@ impl UIRenderer {
     /// Handle keyboard input for Excel grid editing
     pub fn handle_excel_grid_input(&mut self, key: crossterm::event::KeyCode, shift: bool) {
         self.excel_grid.handle_key(key, shift);
+    }
+    
+    /// Handle keyboard input with full modifiers for advanced editing
+    pub fn handle_excel_grid_input_with_modifiers(&mut self, key: crossterm::event::KeyCode, shift: bool, ctrl: bool, alt: bool) {
+        eprintln!("[UI] Handling key {:?} shift={} ctrl={} alt={}", key, shift, ctrl, alt);
+        self.excel_grid.handle_key_with_modifiers(key, shift, ctrl, alt);
+        eprintln!("[UI] After key: cursor={:?} selecting={} anchor={:?}", 
+                 self.excel_grid.cursor, self.excel_grid.selecting, self.excel_grid.anchor);
     }
     
     /// Check if Excel grid is in selection mode
