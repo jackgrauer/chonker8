@@ -278,8 +278,32 @@ impl UIRenderer {
         }
         eprintln!("[DEBUG] Left panel rendered");
         
-        // Render text extraction on right side
-        self.render_text_extraction_panel(split_x, 0, width - split_x, height - 2)?;
+        // Draw header for right panel
+        execute!(
+            stdout(),
+            MoveTo(split_x + 2, 0),
+            SetForegroundColor(Color::Green),
+            SetAttributes(Attributes::from(Attribute::Bold)),
+            Print("◀ TEXT EXTRACTION (editable) ▶"),
+            SetAttributes(Attributes::from(Attribute::Reset))
+        )?;
+        
+        // Show extraction metadata if available
+        if let Some(method) = &self.extraction_method {
+            execute!(
+                stdout(),
+                MoveTo(split_x + 2, 1),
+                SetForegroundColor(Color::DarkGrey),
+                Print(format!("Method: {} | Quality: {:.0}%", 
+                    method,
+                    self.extraction_quality.unwrap_or(0.0) * 100.0
+                )),
+                ResetColor
+            )?;
+        }
+        
+        // Render text extraction on right side using the Excel grid
+        self.render_text_content(split_x + 2, 2, width - split_x - 4, height - 4)?;
         
         // Status bar
         let status_text = if let Some(path) = &self.current_pdf_path {
@@ -531,14 +555,10 @@ impl UIRenderer {
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // ALWAYS use Kitty protocol - NO FALLBACK
         if let Some(ref image) = self.current_pdf_image {
-            // Send image on first render or if screen was cleared
-            if !self.image_sent {
-                eprintln!("[DEBUG] Sending Kitty image");
-                self.image_sent = true;
-            } else {
-                // Image already on screen, just return
-                return Ok(());
-            }
+            // Always send the image - Kitty protocol handles replacing existing images
+            // The clear command with same ID will replace the old one
+            eprintln!("[DEBUG] Sending Kitty image");
+            self.image_sent = true;
             
             // Use inline Kitty implementation with correct protocol
             struct KittyImage;
@@ -839,12 +859,14 @@ impl UIRenderer {
             self.current_page = 1; // Cycle back to first page
         }
         self.scroll_offset = 0;
+        self.image_sent = false; // Reset flag so new page image is sent
     }
     
     pub fn prev_page(&mut self) {
         if self.current_page > 1 {
             self.current_page -= 1;
             self.scroll_offset = 0;
+            self.image_sent = false; // Reset flag so new page image is sent
         }
     }
     

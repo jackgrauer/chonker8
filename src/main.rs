@@ -39,6 +39,10 @@ struct Args {
     /// Test Kitty graphics protocol detection
     #[arg(long)]
     test_kitty: bool,
+    
+    /// Run interactive test to verify arrow keys and text display work correctly
+    #[arg(long)]
+    test_ui: bool,
 }
 
 struct App {
@@ -270,7 +274,22 @@ impl App {
         // Check if we're on the PDF viewer screen and handle scrolling/editing
         let screen = self.renderer.current_screen();
         if *screen == Screen::PdfViewer {
-            // Check for special control keys first
+            // Check for navigation keys FIRST (Tab, Esc)
+            match key.code {
+                KeyCode::Tab => {
+                    // Tab always switches screens
+                    self.renderer.next_screen();
+                    self.needs_redraw = true;
+                    return Ok(());
+                }
+                KeyCode::Esc => {
+                    self.running = false;
+                    return Ok(());
+                }
+                _ => {}
+            }
+            
+            // Then check for special control keys
             match key.code {
                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     // Toggle Excel grid block selection mode
@@ -293,7 +312,7 @@ impl App {
                 _ => {}
             }
             
-            // Pass keyboard input to Excel grid for editing
+            // Pass other keyboard input to Excel grid for editing
             let shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
             self.renderer.handle_excel_grid_input(key.code, shift_held);
             self.needs_redraw = true;
@@ -477,15 +496,67 @@ fn main() -> Result<()> {
         return Ok(());
     }
     
+    // Handle UI test mode
+    if args.test_ui {
+        eprintln!("╔══════════════════════════════════════════════════════════╗");
+        eprintln!("║          CHONKER8-HOT UI TEST MODE                        ║");
+        eprintln!("╠══════════════════════════════════════════════════════════╣");
+        eprintln!("║ Testing the following fixes:                              ║");
+        eprintln!("║ 1. PDF image should NOT disappear when arrow keys pressed ║");
+        eprintln!("║ 2. Text extraction should display on the right side       ║");
+        eprintln!("║ 3. Text should be editable with Excel-style grid          ║");
+        eprintln!("╠══════════════════════════════════════════════════════════╣");
+        eprintln!("║ Controls to test:                                         ║");
+        eprintln!("║ • Arrow Keys: Move cursor (image should stay visible)     ║");
+        eprintln!("║ • Shift+Arrows: Select text blocks                        ║");
+        eprintln!("║ • Type: Edit text at cursor position                      ║");
+        eprintln!("║ • Ctrl+S: Save edited text                                ║");
+        eprintln!("║ • Tab: Switch between screens                             ║");
+        eprintln!("║ • Esc: Exit                                               ║");
+        eprintln!("╠══════════════════════════════════════════════════════════╣");
+        eprintln!("║ Expected behavior:                                        ║");
+        eprintln!("║ ✓ Left panel shows PDF image (dark mode filtered)         ║");
+        eprintln!("║ ✓ Right panel shows extracted text                        ║");
+        eprintln!("║ ✓ Arrow keys move cursor without hiding PDF              ║");
+        eprintln!("║ ✓ Text can be edited and selected                        ║");
+        eprintln!("╚══════════════════════════════════════════════════════════╝");
+        eprintln!();
+        eprintln!("Starting in 2 seconds...");
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    
     
     // Create app
     let mut app = App::new()?;
     
+    // Handle test mode PDF loading
+    let pdf_to_load = if args.test_ui {
+        // In test mode, try to find a test PDF
+        if PathBuf::from("test.pdf").exists() {
+            eprintln!("✓ Loading test.pdf for UI testing");
+            Some(PathBuf::from("test.pdf"))
+        } else if PathBuf::from("real_test.pdf").exists() {
+            eprintln!("✓ Loading real_test.pdf for UI testing");
+            Some(PathBuf::from("real_test.pdf"))
+        } else if let Some(ref pdf) = args.pdf_file {
+            eprintln!("✓ Loading {} for UI testing", pdf.display());
+            Some(pdf.clone())
+        } else {
+            eprintln!("⚠ No test PDF found, will use file picker");
+            eprintln!("  Tip: Create test.pdf or pass a PDF file as argument");
+            None
+        }
+    } else {
+        args.pdf_file
+    };
+    
     // Load PDF if provided, or use default test PDF
-    if let Some(pdf_path) = args.pdf_file {
-        eprintln!("[INFO] A/B Comparison Mode:");
-        eprintln!("[INFO] Left pane: lopdf-kitty rendering");
-        eprintln!("[INFO] Right pane: pdftotext extraction");
+    if let Some(pdf_path) = pdf_to_load {
+        if !args.test_ui {
+            eprintln!("[INFO] A/B Comparison Mode:");
+            eprintln!("[INFO] Left pane: lopdf-kitty rendering");
+            eprintln!("[INFO] Right pane: pdftotext extraction");
+        }
         app.load_pdf(&pdf_path.to_string_lossy())?;
     } else {
         // Auto-load the test PDF for easier development
@@ -545,6 +616,24 @@ fn main() -> Result<()> {
     // Run the app
     app.run()?;
     
-    println!("Thanks for using Chonker8!");
+    // Show test report if in test mode
+    if args.test_ui {
+        eprintln!();
+        eprintln!("╔══════════════════════════════════════════════════════════╗");
+        eprintln!("║               TEST COMPLETE                               ║");
+        eprintln!("╠══════════════════════════════════════════════════════════╣");
+        eprintln!("║ Please verify the following worked correctly:             ║");
+        eprintln!("║                                                            ║");
+        eprintln!("║ ✓ PDF image remained visible when using arrow keys?       ║");
+        eprintln!("║ ✓ Text extraction displayed on the right panel?           ║");
+        eprintln!("║ ✓ Text cursor moved with arrow keys?                      ║");
+        eprintln!("║ ✓ Text could be edited by typing?                         ║");
+        eprintln!("║ ✓ Shift+arrows selected text blocks?                      ║");
+        eprintln!("║                                                            ║");
+        eprintln!("║ If any of these didn't work, please report the issue.     ║");
+        eprintln!("╚══════════════════════════════════════════════════════════╝");
+    } else {
+        println!("Thanks for using Chonker8!");
+    }
     Ok(())
 }
