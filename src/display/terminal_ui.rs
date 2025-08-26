@@ -837,25 +837,23 @@ impl UIRenderer {
         let cursor_x = split_x + 1 + line_number_offset + self.excel_grid.cursor.0 as u16;
         let cursor_y = 2 + self.excel_grid.cursor.1 as u16;
         
-        // Show cursor at the correct position in the text editor
+        // Final cleanup: ALWAYS clear columns 0 and 1 to prevent any artifacts
+        self.clear_region(0, 0, 2, height)?;
+        
+        // Show cursor at the correct position in the text editor AFTER clearing
+        // This ensures cursor is only visible in the right panel
         execute!(
             stdout(),
             MoveTo(cursor_x, cursor_y),
             crossterm::cursor::Show
         )?;
         
-        // Final cleanup: ALWAYS clear columns 0 and 1 to prevent any artifacts
-        self.clear_region(0, 0, 2, height)?;
-        
         stdout().flush()?;
         Ok(())
     }
     
     /*
-    // Debug screen removed - keeping skeleton for potential future use
-    fn render_debug_screen(&mut self) -> Result<()> {
-        let (width, height) = terminal::size()?;
-        
+    // Debug screen removed - not needed
         // Clear screen
         execute!(
             stdout(),
@@ -961,7 +959,6 @@ impl UIRenderer {
         
         stdout().flush()?;
         Ok(())
-    }
     */
     
     fn render_pdf_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {

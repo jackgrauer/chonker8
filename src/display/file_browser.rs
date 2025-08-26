@@ -11,7 +11,6 @@ use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use crate::theme::ChonkerTheme;
 
 pub struct IntegratedFilePicker {
     nucleo: Nucleo<Arc<str>>,
@@ -190,7 +189,7 @@ impl IntegratedFilePicker {
         }
 
         // Draw status and help
-        let help_line = height - 3;
+        let _help_line = height - 3;
         let scroll_indicator = if all_matches.len() > max_display_items {
             format!("  Showing {}-{} of {} files", 
                 self.scroll_offset + 1, 
