@@ -226,14 +226,7 @@ impl ExcelGrid {
                 // Regular typing (not a ctrl shortcut)
                 if self.selecting {
                     // Replace all characters in selected block
-                    let (x1, y1, x2, y2) = self.get_selection_bounds();
-                    for y in y1..=y2 {
-                        for x in x1..=x2 {
-                            if y < self.cells.len() && x < self.cells[y].len() {
-                                self.cells[y][x] = c;
-                            }
-                        }
-                    }
+                    self.for_each_in_selection(|cell| *cell = c);
                     self.selecting = false;
                     self.status_message = Some(format!("Replaced selection with '{}'", c));
                 } else {
@@ -254,17 +247,10 @@ impl ExcelGrid {
                 // Find last non-space character in current line
                 if self.cursor.1 < self.cells.len() {
                     let line = &self.cells[self.cursor.1];
-                    let mut found = false;
-                    for i in (0..self.width).rev() {
-                        if line[i] != ' ' {
-                            self.cursor.0 = (i + 1).min(self.width - 1);
-                            found = true;
-                            break;
-                        }
-                    }
-                    if !found {
-                        self.cursor.0 = 0;
-                    }
+                    self.cursor.0 = line.iter()
+                        .rposition(|&c| c != ' ')
+                        .map(|i| (i + 1).min(self.width - 1))
+                        .unwrap_or(0);
                 }
             }
             
@@ -286,16 +272,21 @@ impl ExcelGrid {
         }
     }
     
-    /// Clear the selected block
-    pub fn clear_selection(&mut self) {
+    /// Apply a function to each cell in the current selection
+    fn for_each_in_selection<F>(&mut self, f: F) 
+    where F: Fn(&mut char)
+    {
         let (x1, y1, x2, y2) = self.get_selection_bounds();
-        for y in y1..=y2 {
-            for x in x1..=x2 {
-                if y < self.cells.len() && x < self.cells[y].len() {
-                    self.cells[y][x] = ' ';
-                }
+        for y in y1..=y2.min(self.cells.len().saturating_sub(1)) {
+            for x in x1..=x2.min(self.cells.get(y).map(|row| row.len().saturating_sub(1)).unwrap_or(0)) {
+                f(&mut self.cells[y][x]);
             }
         }
+    }
+    
+    /// Clear the selected block
+    pub fn clear_selection(&mut self) {
+        self.for_each_in_selection(|c| *c = ' ');
         self.selecting = false;
     }
     
@@ -333,6 +324,32 @@ impl ExcelGrid {
         self.handle_key_with_modifiers(key, shift_held, false, false);
     }
     
+    /// Helper to execute clipboard operations with proper error handling
+    fn with_clipboard<F, T>(&mut self, operation: &str, f: F) -> Option<T>
+    where 
+        F: FnOnce(&mut Clipboard) -> Result<T, Box<dyn std::error::Error>>
+    {
+        match &self.clipboard {
+            Some(clipboard) => match clipboard.lock() {
+                Ok(mut clip) => match f(&mut *clip) {
+                    Ok(result) => Some(result),
+                    Err(e) => {
+                        self.status_message = Some(format!("{} FAILED: {}", operation, e));
+                        None
+                    }
+                },
+                Err(_) => {
+                    self.status_message = Some("ERROR: Clipboard locked".to_string());
+                    None
+                }
+            },
+            None => {
+                self.status_message = Some("ERROR: No clipboard".to_string());
+                None
+            }
+        }
+    }
+    
     /// Copy selection to system clipboard
     pub fn copy_to_clipboard(&mut self) {
         if !self.selecting {
@@ -341,28 +358,14 @@ impl ExcelGrid {
         }
         
         let text = self.copy_selection();
-        let _text_preview = if text.len() > 20 {
-            format!("{}...", text.chars().take(20).collect::<String>())
-        } else {
-            text.clone()
-        };
+        let text_len = text.len();
         
-        if let Some(clipboard) = self.clipboard.clone() {
-            if let Ok(mut clip) = clipboard.lock() {
-                match clip.set_text(&text) {
-                    Ok(_) => {
-                        self.status_message = Some(format!("COPIED {} chars", text.len()));
-                    }
-                    Err(e) => {
-                        self.status_message = Some(format!("COPY FAILED: {}", e));
-                    }
-                }
-            } else {
-                self.status_message = Some("ERROR: Clipboard locked".to_string());
-            }
-        } else {
-            self.status_message = Some("ERROR: No clipboard".to_string());
-        }
+        self.with_clipboard("COPY", |clip| {
+            clip.set_text(&text)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+        }).map(|_| {
+            self.status_message = Some(format!("COPIED {} chars", text_len));
+        });
     }
     
     /// Cut selection to clipboard
@@ -372,49 +375,31 @@ impl ExcelGrid {
             return;
         }
         
-        // Copy first
         let text = self.copy_selection();
         let chars_count = text.len();
         
-        if let Some(clipboard) = self.clipboard.clone() {
-            if let Ok(mut clip) = clipboard.lock() {
-                match clip.set_text(&text) {
-                    Ok(_) => {
-                        // Clear after successful copy
-                        self.clear_selection();
-                        self.status_message = Some(format!("CUT: {} chars removed", chars_count));
-                    }
-                    Err(e) => {
-                        self.status_message = Some(format!("CUT FAILED: {}", e));
-                    }
-                }
-            } else {
-                self.status_message = Some("ERROR: Clipboard locked".to_string());
-            }
-        } else {
-            self.status_message = Some("ERROR: No clipboard".to_string());
-        }
+        self.with_clipboard("CUT", |clip| {
+            clip.set_text(&text)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+        }).map(|_| {
+            self.clear_selection();
+            self.status_message = Some(format!("CUT: {} chars removed", chars_count));
+        });
     }
     
     /// Paste from system clipboard
     pub fn paste_from_clipboard(&mut self) {
-        if let Some(clipboard) = self.clipboard.clone() {
-            if let Ok(mut clip) = clipboard.lock() {
-                match clip.get_text() {
-                    Ok(text) => {
-                        self.paste_text(&text);
-                        self.status_message = Some(format!("PASTED {} chars", text.len()));
-                    }
-                    Err(_) => {
-                        self.status_message = Some("CLIPBOARD EMPTY".to_string());
-                    }
-                }
-            } else {
-                self.status_message = Some("ERROR: Clipboard locked".to_string());
-            }
-        } else {
-            self.status_message = Some("ERROR: No clipboard".to_string());
-        }
+        self.with_clipboard("PASTE", |clip| {
+            clip.get_text()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+        }).map(|text| {
+            let text_len = text.len();
+            self.paste_text(&text);
+            self.status_message = Some(format!("PASTED {} chars", text_len));
+        }).or_else(|| {
+            self.status_message = Some("CLIPBOARD EMPTY".to_string());
+            None
+        });
     }
     
     /// Get current status message
@@ -549,6 +534,33 @@ pub struct UIRenderer {
 }
 
 impl UIRenderer {
+    // Terminal drawing helper methods
+    fn draw_header(&self, x: u16, y: u16, text: &str) -> Result<()> {
+        execute!(
+            stdout(),
+            MoveTo(x, y),
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
+            Print(format!(" {} ", text)),
+            ResetColor
+        )?;
+        Ok(())
+    }
+    
+    fn clear_region(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+        execute!(stdout(), SetBackgroundColor(Color::Black))?;
+        let blank_line = " ".repeat(width as usize);
+        for row in 0..height {
+            execute!(
+                stdout(),
+                MoveTo(x, y + row),
+                Print(&blank_line)
+            )?;
+        }
+        execute!(stdout(), ResetColor)?;
+        Ok(())
+    }
+    
     pub fn new(config: UIConfig) -> Self {
         // Initialize the file picker
         let file_picker = match IntegratedFilePicker::new() {
@@ -742,23 +754,8 @@ impl UIRenderer {
             )?;
             
             // Panel titles
-            execute!(
-                stdout(),
-                MoveTo(2, 0),
-                SetBackgroundColor(Color::DarkBlue),
-                SetForegroundColor(Color::White),
-                Print(" PDF DOCUMENT "),
-                ResetColor
-            )?;
-            
-            execute!(
-                stdout(),
-                MoveTo(split_x + 2, 0),
-                SetBackgroundColor(Color::DarkBlue),
-                SetForegroundColor(Color::White),
-                Print(" TEXT EDITOR "),
-                ResetColor
-            )?;
+            self.draw_header(2, 0, "PDF DOCUMENT")?;
+            self.draw_header(split_x + 2, 0, "TEXT EDITOR")?;
         }
         
         // Render PDF content or image - use FULL left panel
@@ -782,15 +779,7 @@ impl UIRenderer {
         // Only clear the right panel on first render or resize
         if !self.image_sent {
             // Clear the right panel first time only
-            execute!(stdout(), SetBackgroundColor(Color::Black))?;
-            for row in 1..height - 1 {
-                execute!(
-                    stdout(),
-                    MoveTo(split_x + 1, row),
-                    Print(" ".repeat((width - split_x - 1) as usize))
-                )?;
-            }
-            execute!(stdout(), ResetColor)?;
+            self.clear_region(split_x + 1, 1, width - split_x - 1, height - 2)?;
             
             // Show extraction method in a clean way
             if let Some(method) = &self.extraction_method {
@@ -809,25 +798,26 @@ impl UIRenderer {
         
         self.right_panel_dirty = false;
         
-        // Status bar with Excel grid status
-        let mut status_text = if let Some(path) = &self.current_pdf_path {
-            format!("File: {} │ Page {}/{}", 
-                path.file_name().unwrap_or_default().to_string_lossy(),
-                self.current_page, 
-                self.total_pages)
-        } else {
-            "PDF - TEST Screen".to_string()
-        };
+        // Status bar with Excel grid status - functional approach
+        let status_parts: Vec<String> = vec![
+            // File info or default text
+            self.current_pdf_path.as_ref().map(|path| 
+                format!("File: {} │ Page {}/{}", 
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    self.current_page, 
+                    self.total_pages)
+            ).unwrap_or_else(|| "PDF - TEST Screen".to_string()),
+            
+            // Excel grid status or shortcuts
+            self.excel_grid.get_status_message()
+                .map(|msg| msg.to_string())
+                .unwrap_or_else(|| "F1:Help Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste".to_string()),
+            
+            // Navigation help
+            "TAB:Switch ESC:Exit".to_string(),
+        ];
         
-        // Add Excel grid status message if available
-        if let Some(msg) = self.excel_grid.get_status_message() {
-            status_text.push_str(&format!(" │ {}", msg));
-        } else {
-            // Show basic shortcuts only
-            status_text.push_str(" │ F1:Help Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste");
-        }
-        
-        status_text.push_str(" │ TAB:Switch ESC:Exit");
+        let status_text = status_parts.join(" │ ");
         
         // No bottom border needed
         
@@ -855,15 +845,7 @@ impl UIRenderer {
         )?;
         
         // Final cleanup: ALWAYS clear columns 0 and 1 to prevent any artifacts
-        execute!(stdout(), SetBackgroundColor(Color::Black))?;
-        for row in 0..height {
-            execute!(
-                stdout(),
-                MoveTo(0, row),
-                Print("  ")  // Clear two columns instead of one
-            )?;
-        }
-        execute!(stdout(), ResetColor)?;
+        self.clear_region(0, 0, 2, height)?;
         
         stdout().flush()?;
         Ok(())
