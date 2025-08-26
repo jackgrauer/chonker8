@@ -7,7 +7,7 @@ use crate::pdf::render_with_pdftoppm::SystemPdfRenderer;
 
 /// Render a PDF page to an image using the system's pdftoppm
 pub fn render_pdf_page(pdf_path: &Path, page_num: usize, width: u32, height: u32) -> Result<DynamicImage> {
-    eprintln!("[PDF_RENDERER] Using system pdftoppm for PDF rendering");
+    // eprintln!("[PDF_RENDERER] Using system pdftoppm for PDF rendering");
     
     // Create system renderer
     let renderer = SystemPdfRenderer::new();
@@ -15,7 +15,7 @@ pub fn render_pdf_page(pdf_path: &Path, page_num: usize, width: u32, height: u32
     // Render to bitmap using pdftoppm
     let image = renderer.render_page_to_bitmap(pdf_path, page_num, width, height)?;
     
-    eprintln!("[PDF_RENDERER] ✅ Page rendered to bitmap successfully");
+    // eprintln!("[PDF_RENDERER] ✅ Page rendered to bitmap successfully");
     Ok(image)
 }
 

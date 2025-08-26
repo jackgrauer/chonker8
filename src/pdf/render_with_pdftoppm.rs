@@ -13,7 +13,7 @@ impl SystemPdfRenderer {
     }
 
     pub fn render_page_to_bitmap(&self, pdf_path: &Path, page_num: usize, width: u32, height: u32) -> Result<DynamicImage> {
-        eprintln!("[SYSTEM] Using pdftoppm to render page {} at {}x{}", page_num, width, height);
+        // eprintln!("[SYSTEM] Using pdftoppm to render page {} at {}x{}", page_num, width, height);
         
         // Create a temporary directory for output
         let temp_dir = TempDir::new()?;
@@ -48,7 +48,7 @@ impl SystemPdfRenderer {
             // Try without page number suffix
             let alt_file = temp_dir.path().join("page-1.png");
             if alt_file.exists() {
-                eprintln!("[SYSTEM] Loading rendered page from {:?}", alt_file);
+                // eprintln!("[SYSTEM] Loading rendered page from {:?}", alt_file);
                 let image = image::open(&alt_file)?;
                 
                 // Convert white backgrounds to pure black to match terminal
@@ -61,22 +61,23 @@ impl SystemPdfRenderer {
                 for (x, y, pixel) in rgba_image.enumerate_pixels() {
                     let Rgba([r, g, b, a]) = *pixel;
                     
-                    // If pixel is white or near-white, make it pure black
-                    if r > 240 && g > 240 && b > 240 {
-                        black_bg_image.put_pixel(x, y, Rgba([0, 0, 0, a]));
-                    } else {
-                        black_bg_image.put_pixel(x, y, *pixel);
-                    }
+                    // Invert colors: white becomes black, black becomes white
+                    // This makes PDFs have white text on black background
+                    let inverted_r = 255 - r;
+                    let inverted_g = 255 - g;
+                    let inverted_b = 255 - b;
+                    
+                    black_bg_image.put_pixel(x, y, Rgba([inverted_r, inverted_g, inverted_b, a]));
                 }
                 
                 let final_image = DynamicImage::ImageRgba8(black_bg_image);
-                eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{}", final_image.width(), final_image.height());
+                // eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{}", final_image.width(), final_image.height());
                 return Ok(final_image);
             }
             return Err(anyhow::anyhow!("Output file not found at {:?}", output_file));
         }
         
-        eprintln!("[SYSTEM] Loading rendered page from {:?}", output_file);
+        // eprintln!("[SYSTEM] Loading rendered page from {:?}", output_file);
         let image = image::open(&output_file)?;
         
         // Convert white backgrounds to pure black to match terminal
@@ -89,20 +90,21 @@ impl SystemPdfRenderer {
         for (x, y, pixel) in rgba_image.enumerate_pixels() {
             let Rgba([r, g, b, a]) = *pixel;
             
-            // If pixel is white or near-white, make it pure black
-            if r > 240 && g > 240 && b > 240 {
-                black_bg_image.put_pixel(x, y, Rgba([0, 0, 0, a]));
-            } else {
-                black_bg_image.put_pixel(x, y, *pixel);
-            }
+            // Invert colors: white becomes black, black becomes white
+            // This makes PDFs have white text on black background
+            let inverted_r = 255 - r;
+            let inverted_g = 255 - g;
+            let inverted_b = 255 - b;
+            
+            black_bg_image.put_pixel(x, y, Rgba([inverted_r, inverted_g, inverted_b, a]));
         }
         
         let final_image = DynamicImage::ImageRgba8(black_bg_image);
         
         // Save a debug copy
         final_image.save("/tmp/system_render_output.png").ok();
-        eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{} - saved to /tmp/system_render_output.png", 
-                 final_image.width(), final_image.height());
+        // eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{} - saved to /tmp/system_render_output.png", 
+        //          final_image.width(), final_image.height());
         
         Ok(final_image)
     }

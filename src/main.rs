@@ -86,27 +86,27 @@ impl App {
     }
     
     fn load_pdf(&mut self, path: &str) -> Result<()> {
-        eprintln!("[DEBUG] load_pdf called with: {}", path);
-        eprintln!("[DEBUG] Command line loading PDF: {}", path);
+        // eprintln!("[DEBUG] load_pdf called with: {}", path);
+        // eprintln!("[DEBUG] Command line loading PDF: {}", path);
         self.pdf_path = Some(path.to_string());
         
         // Load PDF synchronously to avoid runtime issues
         let pdf_path = PathBuf::from(path);
-        eprintln!("[DEBUG] Checking if path exists: {}", pdf_path.exists());
-        eprintln!("[DEBUG] PDF path exists: {}", pdf_path.exists());
-        eprintln!("[DEBUG] Full path: {:?}", pdf_path);
+        // eprintln!("[DEBUG] Checking if path exists: {}", pdf_path.exists());
+        // eprintln!("[DEBUG] PDF path exists: {}", pdf_path.exists());
+        // eprintln!("[DEBUG] Full path: {:?}", pdf_path);
         
         if pdf_path.exists() {
-            eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
-            eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
+            // eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
+            // eprintln!("[DEBUG] Path exists, calling renderer.load_pdf");
             // Load synchronously without async runtime
             match self.renderer.load_pdf(pdf_path) {
                 Ok(()) => {
-                    eprintln!("[DEBUG] ✅ PDF loaded successfully: {}", path);
+                    // eprintln!("[DEBUG] ✅ PDF loaded successfully: {}", path);
                     // Switch to PDF viewer screen when loading from command line
                     self.renderer.set_screen(Screen::PdfViewer);
                     self.needs_redraw = true;
-                    eprintln!("[DEBUG] Switched to PDF viewer screen");
+                    // eprintln!("[DEBUG] Switched to PDF viewer screen");
                 }
                 Err(e) => {
                     eprintln!("[ERROR] ❌ Failed to load PDF: {}", e);
@@ -119,7 +119,7 @@ impl App {
         }
         
         self.needs_redraw = true;
-        eprintln!("[DEBUG] load_pdf complete, needs_redraw set");
+        // eprintln!("[DEBUG] load_pdf complete, needs_redraw set");
         Ok(())
     }
     
@@ -131,16 +131,16 @@ impl App {
             terminal::enable_raw_mode()?;
             execute!(stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
         } else {
-            eprintln!("[DEBUG] Not a TTY, running in non-interactive mode");
+            // eprintln!("[DEBUG] Not a TTY, running in non-interactive mode");
         }
         
         // Initial render - only render once
-        eprintln!("[DEBUG] Initial render call");
+        // eprintln!("[DEBUG] Initial render call");
         self.renderer.render()?;
         self.needs_redraw = false;
         
         {
-            eprintln!("[DEBUG] needs_redraw=false, no second render");
+            // eprintln!("[DEBUG] needs_redraw=false, no second render");
         }
         
         // Main loop
@@ -603,19 +603,19 @@ fn main() -> Result<()> {
     // Load PDF if provided, or use default test PDF
     if let Some(pdf_path) = pdf_to_load {
         if !args.test_ui {
-            eprintln!("[INFO] A/B Comparison Mode:");
-            eprintln!("[INFO] Left pane: lopdf-kitty rendering");
-            eprintln!("[INFO] Right pane: pdftotext extraction");
+            // eprintln!("[INFO] A/B Comparison Mode:");
+            // eprintln!("[INFO] Left pane: lopdf-kitty rendering");
+            // eprintln!("[INFO] Right pane: pdftotext extraction");
         }
         app.load_pdf(&pdf_path.to_string_lossy())?;
     } else {
         // Auto-load the test PDF for easier development
         let test_pdf = PathBuf::from("/Users/jack/Documents/chonker_test.pdf");
         if test_pdf.exists() {
-            eprintln!("[INFO] Auto-loading test PDF: {:?}", test_pdf);
-            eprintln!("[INFO] A/B Comparison Mode:");
-            eprintln!("[INFO] Left pane: lopdf-kitty rendering");
-            eprintln!("[INFO] Right pane: pdftotext extraction");
+            // eprintln!("[INFO] Auto-loading test PDF: {:?}", test_pdf);
+            // eprintln!("[INFO] A/B Comparison Mode:");
+            // eprintln!("[INFO] Left pane: lopdf-kitty rendering");
+            // eprintln!("[INFO] Right pane: pdftotext extraction");
             app.load_pdf(&test_pdf.to_string_lossy())?;
         } else {
         // Show usage
