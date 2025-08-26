@@ -73,10 +73,14 @@ impl UIRenderer {
             eprintln!("[WARNING] Run with: kitty ./target/release/chonker8-hot [pdf]");
         }
         
+        // Calculate actual available width for Excel grid based on terminal size
+        let (term_width, _) = terminal::size().unwrap_or((80, 24));
+        let grid_width = (term_width / 2 - 4) as usize; // Half terminal minus borders
+        
         Self {
             config,
             pdf_content: vec![vec![' '; 80]; 24], // Default empty content
-            excel_grid: ExcelGrid::new(80, 50),  // Initialize Excel grid
+            excel_grid: ExcelGrid::new(grid_width.max(40), 50),  // Initialize Excel grid with actual width
             current_page: 1,
             total_pages: 1,
             scroll_offset: 0,
@@ -976,11 +980,15 @@ impl UIRenderer {
         };
         
         let split_col = term_width / 2;
+        let max_grid_width = (term_width - split_col - 4) as usize; // Available width for grid
         
         // Only handle if click is in the right panel
         if event.column >= split_col + 2 {  // +2 for border and padding
             let grid_col = (event.column - split_col - 2) as usize;
             let grid_row = event.row.saturating_sub(2) as usize;  // -2 for header
+            
+            // Clamp grid_col to the visible area width
+            let grid_col = grid_col.min(max_grid_width.saturating_sub(1));
             
             use crossterm::event::MouseEventKind;
             match event.kind {
@@ -1182,8 +1190,12 @@ impl UIRenderer {
         // Convert extracted text to grid format for display
         let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);
         
+        // Calculate actual available width for Excel grid based on terminal size
+        let (term_width, _) = terminal::size().unwrap_or((80, 24));
+        let grid_width = (term_width / 2 - 4) as usize; // Half terminal minus borders
+        
         // Update Excel grid with the extracted text
-        self.excel_grid = ExcelGrid::from_pdftext(&text_with_metadata, 80);
+        self.excel_grid = ExcelGrid::from_pdftext(&text_with_metadata, grid_width.max(40));
         
         // Update state
         self.current_pdf_path = Some(pdf_path);
