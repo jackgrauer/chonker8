@@ -752,20 +752,12 @@ impl UIRenderer {
         
         // Render PDF content or image
         if self.current_pdf_image.is_some() {
-            // Try to display the PDF image in the left panel
-            self.render_pdf_content(2, 2, split_x - 4, height - 4)?;
+            // Display the PDF image in the left panel ONLY
+            // split_x is the divider position, so width must be less than that
+            let pdf_panel_width = (split_x - 3).min(40);  // Hard limit to prevent spillover
+            self.render_pdf_content(1, 2, pdf_panel_width, height - 4)?;
             
-            // Also show some debug info on screen
-            execute!(
-                stdout(),
-                MoveTo(2, height - 3),
-                SetForegroundColor(Color::DarkGrey),
-                Print(format!("PDF: {}x{}", 
-                    self.current_pdf_image.as_ref().map(|i| i.width()).unwrap_or(0),
-                    self.current_pdf_image.as_ref().map(|i| i.height()).unwrap_or(0)
-                )),
-                SetForegroundColor(Color::White)
-            )?;
+            // Don't show debug info - it interferes with the PDF display
         } else {
             execute!(
                 stdout(),
@@ -1136,19 +1128,19 @@ impl UIRenderer {
             }
             
             // Calculate scale to fit within the left panel (half the terminal width)
-            // The panel dimensions are in terminal cells, not pixels
-            // Kitty graphics use cells as units for placement
-            let panel_width_cells = width.saturating_sub(4);  // Leave some padding
-            let panel_height_cells = height.saturating_sub(4);
+            // IMPORTANT: Must constrain to left quadrant only!
+            // The width passed in should already be half the terminal
+            let panel_width_cells = width.saturating_sub(2);  // Small margin
+            let panel_height_cells = height.saturating_sub(2);
             
             // For Kitty protocol, we specify size in terminal cells
-            // The image will be scaled to fit within these dimensions
-            let display_width = panel_width_cells.min(50) as u32;  // Cap at reasonable size
-            let display_height = panel_height_cells.min(35) as u32;
+            // Make sure image doesn't exceed the left panel width
+            let display_width = panel_width_cells.min(35) as u32;  // Constrain to left side
+            let display_height = panel_height_cells.min(30) as u32;
             
             // Position at top-left of the panel with small margin
-            let image_x = x + 2;
-            let image_y = y + 2;
+            let image_x = x + 1;  // Closer to edge
+            let image_y = y + 1;
             
             // Move cursor to position
             execute!(
