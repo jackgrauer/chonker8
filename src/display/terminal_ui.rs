@@ -557,11 +557,11 @@ impl UIRenderer {
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // ALWAYS use Kitty protocol - NO FALLBACK
         if let Some(ref image) = self.current_pdf_image {
-            // Only send the image if it hasn't been sent yet
-            if !self.image_sent {
-                self.image_sent = true;
-                
-                // Use inline Kitty implementation with correct protocol
+            // Always send the image - Kitty protocol handles replacing existing images
+            // The clear command with same ID will replace the old one
+            self.image_sent = true;
+            
+            // Use inline Kitty implementation with correct protocol
             struct KittyImage;
             impl KittyImage {
                 fn send_image_positioned(image: &DynamicImage, width: u32, height: u32, x: u16, y: u16) -> Result<()> {
@@ -573,6 +573,9 @@ impl UIRenderer {
                     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
                     let encoded = BASE64.encode(&png_data);
                     
+                    // First, clear the terminal properly
+                    std::io::stdout().flush()?;
+                    
                     // Move cursor to position using crossterm, not raw escape codes
                     execute!(stdout(), MoveTo(x, y))?;
                     
@@ -580,6 +583,7 @@ impl UIRenderer {
                     use std::io::Write;
                     let clear_cmd = b"\x1b_Ga=d\x1b\\";
                     std::io::stdout().write_all(clear_cmd)?;
+                    std::io::stdout().flush()?;
                     
                     // Kitty protocol requires chunking for large images
                     // Maximum chunk size is 4096 bytes
@@ -627,12 +631,11 @@ impl UIRenderer {
                             cmd.extend_from_slice(b"\x1b\\");
                             
                             std::io::stdout().write_all(&cmd)?;
-                            // Don't flush after each chunk - causes flicker
+                            std::io::stdout().flush()?;
                         }
                         
                     }
                     
-                    // Single flush at the end
                     std::io::stdout().flush()?;
                     
                     Ok(())
@@ -660,27 +663,26 @@ impl UIRenderer {
                 MoveTo(image_x, image_y)
             )?;
             
-                // Send image at fixed position within panel
-                match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
-                    Ok(_) => {
-                    }
-                    Err(e) => {
-                        eprintln!("[ERROR] KITTY FAILED: {}", e);
-                        eprintln!("[ERROR] This viewer REQUIRES Kitty-compatible terminal!");
-                        
-                        // Show error message on screen
-                        execute!(
-                            stdout(),
-                            MoveTo(x + 2, y + height/2),
-                            SetForegroundColor(Color::Red),
-                            Print("⚠️  KITTY ERROR ⚠️"),
-                            MoveTo(x + 2, y + height/2 + 2),
-                            Print(&format!("Error: {}", e)),
-                            SetForegroundColor(Color::White)
-                        )?;
-                    }
+            // Send image at fixed position within panel
+            match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
+                Ok(_) => {
                 }
-            } // End of if !self.image_sent block
+                Err(e) => {
+                    eprintln!("[ERROR] KITTY FAILED: {}", e);
+                    eprintln!("[ERROR] This viewer REQUIRES Kitty-compatible terminal!");
+                    
+                    // Show error message on screen
+                    execute!(
+                        stdout(),
+                        MoveTo(x + 2, y + height/2),
+                        SetForegroundColor(Color::Red),
+                        Print("⚠️  KITTY ERROR ⚠️"),
+                        MoveTo(x + 2, y + height/2 + 2),
+                        Print(&format!("Error: {}", e)),
+                        SetForegroundColor(Color::White)
+                    )?;
+                }
+            }
         } else {
             // No image - but this shouldn't happen
             execute!(
