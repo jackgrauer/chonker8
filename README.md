@@ -1,66 +1,186 @@
-# Chonker 8.6 - The PDF Text Extractor (booyeeee!)
+# Chonker8 - Modern Terminal PDF Viewer
 
-A blazing fast PDF viewer with text extraction and editing capabilities. Three distinct screens, clean architecture, and both basic and AI-powered extraction.
-
-## Architecture
-
-```
-chonker8/
-├── main.rs                    // Entry point
-│
-├── views/                     // What you see on screen
-│   ├── pdf_viewer/           // Left side - PDF image
-│   ├── text_editor/          // Right side - editable text  
-│   └── status_bar/           // Bottom - page info
-│
-├── pdf_extraction/           // How we get text from PDFs
-│   ├── basic.rs             // Fast but simple (pdftoppm/pdftotext)
-│   └── ai_powered.rs        // Smart but slow (LayoutLM ML)
-│
-├── controls/                 // User input
-│   ├── keyboard.rs          // Keyboard shortcuts
-│   └── file_picker.rs       // Open file dialog
-│
-├── theme/                    // Colors and appearance
-│   └── colors.rs            // Soft palette (not electric!)
-│
-├── lib/                      // NO EXTERNAL LIBRARIES NEEDED!
-│
-└── README.md                 // You are here!
-```
-
-## Screens
-
-Press **Tab** to cycle through:
-
-1. **File Picker** - Browse PDFs with live thumbnail preview
-2. **Editor** - Split view: PDF image (left) + editable text (right)  
-3. **Debug** - Full screen debug output (Ctrl+C to copy everything)
-
-## Keyboard Shortcuts
-
-- `Tab` - Switch between screens
-- `Ctrl+O` - Open file picker
-- `Ctrl+N/P` - Next/Previous page
-- `Ctrl+C` - Copy selected text (or debug logs)
-- `Ctrl+V` - Paste text
-- `Ctrl+Q` - Quit
+A high-performance terminal-based PDF viewer with split-screen display and advanced text extraction capabilities.
 
 ## Features
 
-- **Fast extraction** - pdftotext for reliable text extraction
-- **AI extraction** - Ferrules ML for understanding complex layouts
-- **Clean UI** - No redundant headers or electric colors
-- **Debug everything** - See ALL the processing that happens
-- **Spatial preservation** - Text maintains its position from the PDF
+- **Split-Screen View**: PDF image on the left, extracted text on the right
+- **Excel-Style Grid Editor**: Edit extracted text with full keyboard and mouse support
+- **Dark Mode**: Automatic color inversion for terminal-friendly viewing
+- **Search Functionality**: Fuzzy search with Ctrl+F powered by Nucleo
+- **Mouse Support**: Click, drag, select, and edit with full mouse integration
+- **Hot Reload**: Automatic UI refresh when PDF changes
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+- **No PDFium Dependency**: Uses reliable system tools (pdftoppm, pdftotext)
 
-## Version 8.6 Changes
+## Installation
 
-- **Stripped notcurses UI** - Replaced with clean crossterm file picker  
-- **Pure crossterm architecture** - Unified, lightweight terminal handling
-- **Smart file picker** - Fuzzy search, PDF metadata, vim-like navigation
-- **Cleaner dependencies** - Removed cursive and notcurses bloat
-- **Better UX** - Real-time search with file size and page count display
-- **4.6MB binary** - Optimized size with consistent theming
+```bash
+# Clone the repository
+git clone https://github.com/jackgrauer/chonker8.git
+cd chonker8
 
-Booyeeee! 🎉
+# Build the project
+cargo build --release
+
+# Run the viewer
+./target/release/chonker8 path/to/your.pdf
+```
+
+## Requirements
+
+- Rust 1.70 or later
+- System tools:
+  - `pdftoppm` (for PDF rendering)
+  - `pdftotext` (for text extraction)
+  
+### Installing Dependencies
+
+**macOS:**
+```bash
+brew install poppler
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install poppler-utils
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S poppler
+```
+
+## Usage
+
+### Command Line
+
+```bash
+# Open a PDF file
+./target/release/chonker8 document.pdf
+
+# Run in test mode
+./target/release/chonker8 --test-kitty
+
+# Show version
+./target/release/chonker8 --version
+```
+
+### Keyboard Shortcuts
+
+**Navigation:**
+- `n` / `p` - Next/Previous page
+- Arrow keys - Navigate text grid
+- Page Up/Down - Scroll content
+- Home/End - Jump to start/end of line
+- Ctrl+Home/End - Jump to start/end of document
+
+**Text Editing:**
+- Type to edit text at cursor
+- Shift + Arrow keys - Select text
+- Ctrl+A - Select all
+- Ctrl+C - Copy selection
+- Ctrl+X - Cut selection
+- Ctrl+V - Paste
+- Backspace/Delete - Remove characters
+- Enter - New line
+
+**Search:**
+- Ctrl+F or F3 - Open search
+- Enter - Find next match
+- Shift+Enter - Find previous match
+- Ctrl+N - Next match
+- Ctrl+Shift+N - Previous match
+- Esc - Exit search mode
+
+**Other:**
+- `q` - Quit application
+- `m` - Toggle display mode
+- `w` - Toggle word wrap
+- `r` - Reload current page
+- `Tab` - Switch between screens
+- Ctrl+S - Save edited text
+
+### Mouse Support
+
+- **Single Click** - Position cursor
+- **Click and Drag** - Select text
+- **Double Click** - Select word
+- **Triple Click** - Select entire line
+- **Right Click** - Context menu (where supported)
+
+## Architecture
+
+Chonker8 uses a clean, modular architecture:
+
+```
+chonker8/
+├── src/
+│   ├── main.rs              # Application entry point
+│   ├── core/               # Core functionality
+│   │   ├── config.rs       # Configuration management
+│   │   └── hot_reload.rs   # File watching and hot reload
+│   ├── display/            # UI components
+│   │   ├── terminal_ui.rs  # Main terminal interface
+│   │   ├── kitty_graphics.rs # Kitty terminal graphics
+│   │   └── file_browser.rs # File selection dialog
+│   └── pdf/                # PDF processing
+│       ├── render_with_pdftoppm.rs # PDF to image
+│       └── extract_text.rs # Text extraction with layout
+└── Cargo.toml
+```
+
+### Key Components
+
+- **PDF Rendering**: Uses system's `pdftoppm` for reliable PDF to image conversion
+- **Text Extraction**: Enhanced `pdftotext` with spatial layout preservation
+- **Terminal UI**: Crossterm for cross-platform terminal manipulation
+- **Search Engine**: Nucleo for fuzzy text searching with highlighting
+- **File Browser**: Integrated file picker with fuzzy search
+
+## Version History
+
+### v8.8.0 (Current)
+- Complete removal of PDFium dependency
+- Enhanced text extraction with word grouping
+- Fuzzy search integration with Nucleo
+- Improved dark mode rendering
+- Fixed PDF containment and aspect ratio issues
+- Removed unused ML extraction modules
+
+### v8.6.0
+- Replaced notcurses with crossterm
+- Added Excel-style grid editor
+- Improved mouse support
+- Added hot reload functionality
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Development
+
+```bash
+# Run in development mode
+cargo run -- test.pdf
+
+# Run tests
+cargo test
+
+# Build with optimizations
+cargo build --release
+```
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Author
+
+Jack Grauer ([@jackgrauer](https://github.com/jackgrauer))
+
+## Acknowledgments
+
+- Poppler utilities for PDF processing
+- Crossterm for terminal manipulation
+- Nucleo for fuzzy search functionality
