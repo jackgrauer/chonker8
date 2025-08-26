@@ -298,10 +298,6 @@ impl ExcelGrid {
         }
         let (x1, y1, x2, y2) = self.get_selection_bounds();
         let selected = x >= x1 && x <= x2 && y >= y1 && y <= y2;
-        if selected && x == x1 && y == y1 {
-            // Log once per selection area
-            eprintln!("[DEBUG] Cell ({},{}) is selected (bounds: {},{} to {},{})", x, y, x1, y1, x2, y2);
-        }
         selected
     }
     
