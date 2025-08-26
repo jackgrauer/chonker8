@@ -61,8 +61,10 @@ impl SystemPdfRenderer {
                 for (x, y, pixel) in rgba_image.enumerate_pixels() {
                     let Rgba([r, g, b, a]) = *pixel;
                     
-                    // Invert colors: white becomes black, black becomes white
-                    // This makes PDFs have white text on black background
+                    // Full inversion for dark mode: 
+                    // - White/light backgrounds become pure black
+                    // - Black text becomes white
+                    // - Gray values are inverted for consistency
                     let inverted_r = 255 - r;
                     let inverted_g = 255 - g;
                     let inverted_b = 255 - b;
@@ -90,8 +92,10 @@ impl SystemPdfRenderer {
         for (x, y, pixel) in rgba_image.enumerate_pixels() {
             let Rgba([r, g, b, a]) = *pixel;
             
-            // Invert colors: white becomes black, black becomes white
-            // This makes PDFs have white text on black background
+            // Full inversion for dark mode: 
+            // - White/light backgrounds become pure black
+            // - Black text becomes white
+            // - Gray values are inverted for consistency
             let inverted_r = 255 - r;
             let inverted_g = 255 - g;
             let inverted_b = 255 - b;

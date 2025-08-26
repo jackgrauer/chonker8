@@ -254,13 +254,17 @@ impl ExcelGrid {
                 // Find last non-space character in current line
                 if self.cursor.1 < self.cells.len() {
                     let line = &self.cells[self.cursor.1];
+                    let mut found = false;
                     for i in (0..self.width).rev() {
                         if line[i] != ' ' {
                             self.cursor.0 = (i + 1).min(self.width - 1);
-                            return;
+                            found = true;
+                            break;
                         }
                     }
-                    self.cursor.0 = 0;
+                    if !found {
+                        self.cursor.0 = 0;
+                    }
                 }
             }
             
@@ -540,6 +544,8 @@ pub struct UIRenderer {
     current_image_id: Option<u32>,
     image_sent: bool,
     first_render: bool,
+    right_panel_dirty: bool,  // Track when right panel needs full redraw
+    last_split_x: u16,  // Track if window was resized
 }
 
 impl UIRenderer {
@@ -596,6 +602,8 @@ impl UIRenderer {
             current_image_id: None,
             image_sent: false,
             first_render: true,
+            right_panel_dirty: true,
+            last_split_x: 0,
         }
     }
     
@@ -689,6 +697,17 @@ impl UIRenderer {
         let (width, height) = terminal::size()?;
         let split_x = width / 2;
         
+        // Check if window was resized
+        if split_x != self.last_split_x {
+            self.right_panel_dirty = true;
+            self.image_sent = false;  // Re-render everything on resize
+            self.first_render = true;  // Treat resize as a new render to clear artifacts
+            self.last_split_x = split_x;
+        }
+        
+        // Hide cursor at the start to prevent flickering
+        execute!(stdout(), crossterm::cursor::Hide)?;
+        
         // Only clear screen on first render to prevent flicker
         if self.first_render {
             execute!(
@@ -698,49 +717,54 @@ impl UIRenderer {
             )?;
             self.first_render = false;
         } else {
-            // Just move to home position, don't hide cursor here
+            // Just move to home position
             execute!(
                 stdout(),
                 MoveTo(0, 0)
             )?;
         }
         
-        // Draw a simple vertical split
-        execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
-        for y in 1..height - 1 {
-            execute!(stdout(), MoveTo(split_x, y), Print("|"))?;
+        // Draw a simple vertical split only on first render or if image not sent yet
+        if !self.image_sent {
+            execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
+            for y in 1..height - 1 {
+                execute!(stdout(), MoveTo(split_x, y), Print("|"))?;
+            }
         }
         
-        // Clear top line for headers
-        execute!(
-            stdout(),
-            MoveTo(0, 0),
-            Clear(ClearType::CurrentLine)
-        )?;
-        
-        // Panel titles
-        execute!(
-            stdout(),
-            MoveTo(2, 0),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(" PDF DOCUMENT "),
-            ResetColor
-        )?;
-        
-        execute!(
-            stdout(),
-            MoveTo(split_x + 2, 0),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(" TEXT EDITOR "),
-            ResetColor
-        )?;
+        // Only redraw headers on first render or if image not sent yet
+        if !self.image_sent {
+            // Clear top line for headers
+            execute!(
+                stdout(),
+                MoveTo(0, 0),
+                Clear(ClearType::CurrentLine)
+            )?;
+            
+            // Panel titles
+            execute!(
+                stdout(),
+                MoveTo(2, 0),
+                SetBackgroundColor(Color::DarkBlue),
+                SetForegroundColor(Color::White),
+                Print(" PDF DOCUMENT "),
+                ResetColor
+            )?;
+            
+            execute!(
+                stdout(),
+                MoveTo(split_x + 2, 0),
+                SetBackgroundColor(Color::DarkBlue),
+                SetForegroundColor(Color::White),
+                Print(" TEXT EDITOR "),
+                ResetColor
+            )?;
+        }
         
         // Render PDF content or image - use FULL left panel
         if self.current_pdf_image.is_some() {
             // Use entire left panel for PDF
-            let pdf_panel_width = split_x - 1;  // Full width up to divider
+            let pdf_panel_width = split_x;  // Full width including divider position
             let pdf_panel_height = height - 2;  // Full height minus status bar
             self.render_pdf_content(0, 1, pdf_panel_width, pdf_panel_height)?;
         } else {
@@ -755,19 +779,35 @@ impl UIRenderer {
         
         // Right panel header is already drawn above with the border
         
-        // Show extraction method in a clean way
-        if let Some(method) = &self.extraction_method {
-            execute!(
-                stdout(),
-                MoveTo(split_x + 2, 1),
-                SetForegroundColor(Color::DarkGrey),
-                Print(format!("[{}]", method.to_uppercase())),
-                ResetColor
-            )?;
+        // Only clear the right panel on first render or resize
+        if !self.image_sent {
+            // Clear the right panel first time only
+            execute!(stdout(), SetBackgroundColor(Color::Black))?;
+            for row in 1..height - 1 {
+                execute!(
+                    stdout(),
+                    MoveTo(split_x + 1, row),
+                    Print(" ".repeat((width - split_x - 1) as usize))
+                )?;
+            }
+            execute!(stdout(), ResetColor)?;
+            
+            // Show extraction method in a clean way
+            if let Some(method) = &self.extraction_method {
+                execute!(
+                    stdout(),
+                    MoveTo(split_x + 2, 1),
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(format!("[{}]", method.to_uppercase())),
+                    ResetColor
+                )?;
+            }
         }
         
-        // Render text extraction on right side using the Excel grid
-        self.render_text_content(split_x + 2, 2, width - split_x - 4, height - 4)?;
+        // Always render text content - it will handle incremental updates
+        self.render_text_content(split_x + 1, 2, width - split_x, height - 4)?;
+        
+        self.right_panel_dirty = false;
         
         // Status bar with Excel grid status
         let mut status_text = if let Some(path) = &self.current_pdf_path {
@@ -800,6 +840,30 @@ impl UIRenderer {
             Print(format!(" {:<width$} ", status_text, width = width as usize - 2)),
             ResetColor
         )?;
+        
+        // Position cursor in the right panel at the Excel grid cursor position
+        // Account for line numbers (5 chars) if enabled
+        let line_number_offset = if self.config.panels.text.line_numbers { 5 } else { 0 };
+        let cursor_x = split_x + 1 + line_number_offset + self.excel_grid.cursor.0 as u16;
+        let cursor_y = 2 + self.excel_grid.cursor.1 as u16;
+        
+        // Show cursor at the correct position in the text editor
+        execute!(
+            stdout(),
+            MoveTo(cursor_x, cursor_y),
+            crossterm::cursor::Show
+        )?;
+        
+        // Final cleanup: ALWAYS clear columns 0 and 1 to prevent any artifacts
+        execute!(stdout(), SetBackgroundColor(Color::Black))?;
+        for row in 0..height {
+            execute!(
+                stdout(),
+                MoveTo(0, row),
+                Print("  ")  // Clear two columns instead of one
+            )?;
+        }
+        execute!(stdout(), ResetColor)?;
         
         stdout().flush()?;
         Ok(())
@@ -1029,11 +1093,26 @@ impl UIRenderer {
     
     
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+        // Only clear and redraw if we haven't sent the image yet or on resize
+        if !self.image_sent {
+            // First, clear the ENTIRE left half with black background
+            let split_x = width + x;  // This should be the split position
+            execute!(stdout(), SetBackgroundColor(Color::Black))?;
+            for row in 0..height {
+                execute!(
+                    stdout(),
+                    MoveTo(0, y + row),  // Always start from column 0
+                    Print(" ".repeat(split_x as usize))  // Clear entire left half
+                )?;
+            }
+            execute!(stdout(), ResetColor)?;
+        }
+        
         // ALWAYS use Kitty protocol - NO FALLBACK
         if let Some(ref image) = self.current_pdf_image {
-            // Always send the image - Kitty protocol handles replacing existing images
-            // The clear command with same ID will replace the old one
-            self.image_sent = true;
+            // Only send the image if we haven't sent it yet
+            if !self.image_sent {
+                self.image_sent = true;
             
             // Use inline Kitty implementation with correct protocol
             struct KittyImage;
@@ -1112,18 +1191,48 @@ impl UIRenderer {
                 }
             }
             
-            // Use FULL left panel space for PDF
-            let panel_width_cells = width;  // Use full width
-            let panel_height_cells = height;  // Use full height
+            // Calculate aspect-ratio preserved dimensions - MAXIMIZE size
+            let panel_width_cells = width as u32;
+            let panel_height_cells = height as u32;
             
-            // For Kitty protocol, we specify size in terminal cells
-            // Use all available space in left panel
-            let display_width = panel_width_cells as u32;
-            let display_height = panel_height_cells as u32;
+            // Get actual image dimensions to preserve aspect ratio
+            let img_width = image.width() as f32;
+            let img_height = image.height() as f32;
+            let aspect_ratio = img_width / img_height;
             
-            // Position at exact top-left corner of panel
-            let image_x = x;
-            let image_y = y;
+            // Calculate the best fit while preserving aspect ratio
+            // Always use the full available dimension and scale the other accordingly
+            let panel_aspect = panel_width_cells as f32 / panel_height_cells as f32;
+            
+            let (display_width, display_height) = if panel_aspect > aspect_ratio {
+                // Panel is wider than image - scale to full height
+                let display_height = panel_height_cells;
+                let display_width = (display_height as f32 * aspect_ratio).round() as u32;
+                // Make sure we don't exceed panel width
+                if display_width > panel_width_cells {
+                    (panel_width_cells, (panel_width_cells as f32 / aspect_ratio).round() as u32)
+                } else {
+                    (display_width, display_height)
+                }
+            } else {
+                // Panel is taller than image - scale to full width
+                let display_width = panel_width_cells;
+                let display_height = (display_width as f32 / aspect_ratio).round() as u32;
+                // Make sure we don't exceed panel height
+                if display_height > panel_height_cells {
+                    ((panel_height_cells as f32 * aspect_ratio).round() as u32, panel_height_cells)
+                } else {
+                    (display_width, display_height)
+                }
+            };
+            
+            // Center the image in the panel (will be 0 offset on the maximized dimension)
+            let x_offset = panel_width_cells.saturating_sub(display_width) / 2;
+            let y_offset = panel_height_cells.saturating_sub(display_height) / 2;
+            
+            // Position at centered location within panel
+            let image_x = x + x_offset as u16;
+            let image_y = y + y_offset as u16;
             
             // Move cursor to position
             execute!(
@@ -1131,12 +1240,13 @@ impl UIRenderer {
                 MoveTo(image_x, image_y)
             )?;
             
-            // Send image at fixed position within panel
-            match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
-                Ok(_) => {
-                }
-                Err(_e) => {
-                    // Silently fail - don't clutter the display
+                // Send image at fixed position within panel
+                match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
+                    Ok(_) => {
+                    }
+                    Err(_e) => {
+                        // Silently fail - don't clutter the display
+                    }
                 }
             }
         } else {
@@ -1151,6 +1261,8 @@ impl UIRenderer {
     fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // Render the Excel grid with block selection
         for row in 0..height.min(self.excel_grid.cells.len() as u16) {
+            // Build entire row first, then print it all at once
+            let mut row_output = String::new();
             execute!(stdout(), MoveTo(x, y + row))?;
             
             // Line numbers
@@ -1162,90 +1274,86 @@ impl UIRenderer {
                     ResetColor,
                 )?;
                 
-                // Grid content
+                // Grid content - build entire row as string first
                 let text_start = 5;
                 let text_width = width - text_start;
                 
+                // Build the row string
                 for col in 0..text_width.min(self.excel_grid.width as u16) {
-                    let grid_row = row as usize;  // Don't add scroll_offset - excel grid handles its own coordinates
+                    let grid_row = row as usize;
                     let grid_col = col as usize;
                     
-                    let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
-                    let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
-                    
-                    
-                    // Apply colors for selection and cursor
-                    if is_cursor && !self.excel_grid.selecting {
-                        // Dark blue cursor when not selecting (matches status bar)
-                        execute!(
-                            stdout(),
-                            SetBackgroundColor(Color::DarkBlue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                    } else if is_selected {
-                        // Blue background for selected text
-                        execute!(
-                            stdout(),
-                            SetBackgroundColor(Color::Blue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                    } else if is_cursor {
-                        // Dark blue cursor when selecting (matches status bar)
-                        execute!(
-                            stdout(),
-                            SetBackgroundColor(Color::DarkBlue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                    } else {
-                        execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
-                    }
-                    
-                    // Print character
                     let ch = if grid_row < self.excel_grid.cells.len() && grid_col < self.excel_grid.cells[grid_row].len() {
                         self.excel_grid.cells[grid_row][grid_col]
                     } else {
                         ' '
                     };
                     
-                    execute!(stdout(), Print(ch))?;
-                    
-                    if is_cursor || is_selected {
-                        execute!(stdout(), ResetColor)?;
+                    row_output.push(ch);
+                }
+                
+                // Pad the rest of the row with spaces to clear any old content
+                while row_output.len() < text_width as usize {
+                    row_output.push(' ');
+                }
+                
+                // Print the entire row at once
+                execute!(stdout(), Print(&row_output))?;
+                
+                // Now handle selection and cursor highlighting
+                let grid_row = row as usize;
+                
+                // First, highlight any selected cells in this row
+                if self.excel_grid.selecting {
+                    let (x1, y1, x2, y2) = self.excel_grid.get_selection_bounds();
+                    if grid_row >= y1 && grid_row <= y2 {
+                        // This row has selected cells
+                        for col in x1..=x2 {
+                            if col < text_width as usize {
+                                execute!(
+                                    stdout(),
+                                    MoveTo(x + text_start + col as u16, y + row),
+                                    SetBackgroundColor(Color::Blue),
+                                    SetForegroundColor(Color::White),
+                                )?;
+                                
+                                let ch = if grid_row < self.excel_grid.cells.len() && col < self.excel_grid.cells[grid_row].len() {
+                                    self.excel_grid.cells[grid_row][col]
+                                } else {
+                                    ' '
+                                };
+                                
+                                execute!(stdout(), Print(ch), ResetColor)?;
+                            }
+                        }
+                    }
+                }
+                
+                // Then highlight the cursor (overwrites selection if at same position)
+                if grid_row == self.excel_grid.cursor.1 {
+                    let cursor_col = self.excel_grid.cursor.0;
+                    if cursor_col < text_width as usize {
+                        execute!(
+                            stdout(),
+                            MoveTo(x + text_start + cursor_col as u16, y + row),
+                            SetBackgroundColor(Color::DarkBlue),
+                            SetForegroundColor(Color::White),
+                        )?;
+                        
+                        let ch = if grid_row < self.excel_grid.cells.len() && cursor_col < self.excel_grid.cells[grid_row].len() {
+                            self.excel_grid.cells[grid_row][cursor_col]
+                        } else {
+                            ' '
+                        };
+                        
+                        execute!(stdout(), Print(ch), ResetColor)?;
                     }
                 }
             } else {
-                // No line numbers - render grid directly
+                // No line numbers - build entire row as string
                 for col in 0..width.min(self.excel_grid.width as u16) {
-                    let grid_row = row as usize;  // Don't add scroll_offset - excel grid handles its own coordinates
+                    let grid_row = row as usize;
                     let grid_col = col as usize;
-                    
-                    let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
-                    let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
-                    
-                    if is_cursor && !self.excel_grid.selecting {
-                        // Dark blue cursor when not selecting (matches status bar)
-                        execute!(
-                            stdout(),
-                            SetBackgroundColor(Color::DarkBlue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                    } else if is_selected {
-                        // Blue background for selected text
-                        execute!(
-                            stdout(),
-                            SetBackgroundColor(Color::Blue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                    } else if is_cursor {
-                        // Dark blue cursor when selecting (matches status bar)
-                        execute!(
-                            stdout(),
-                            SetBackgroundColor(Color::DarkBlue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                    } else {
-                        execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
-                    }
                     
                     let ch = if grid_row < self.excel_grid.cells.len() && grid_col < self.excel_grid.cells[grid_row].len() {
                         self.excel_grid.cells[grid_row][grid_col]
@@ -1253,10 +1361,64 @@ impl UIRenderer {
                         ' '
                     };
                     
-                    execute!(stdout(), Print(ch))?;
-                    
-                    if is_cursor || is_selected {
-                        execute!(stdout(), ResetColor)?;
+                    row_output.push(ch);
+                }
+                
+                // Pad the rest of the row
+                while row_output.len() < width as usize {
+                    row_output.push(' ');
+                }
+                
+                // Print the entire row at once
+                execute!(stdout(), Print(&row_output))?;
+                
+                // Handle selection and cursor highlighting
+                let grid_row = row as usize;
+                
+                // First, highlight any selected cells in this row
+                if self.excel_grid.selecting {
+                    let (x1, y1, x2, y2) = self.excel_grid.get_selection_bounds();
+                    if grid_row >= y1 && grid_row <= y2 {
+                        // This row has selected cells
+                        for col in x1..=x2 {
+                            if col < width as usize {
+                                execute!(
+                                    stdout(),
+                                    MoveTo(x + col as u16, y + row),
+                                    SetBackgroundColor(Color::Blue),
+                                    SetForegroundColor(Color::White),
+                                )?;
+                                
+                                let ch = if grid_row < self.excel_grid.cells.len() && col < self.excel_grid.cells[grid_row].len() {
+                                    self.excel_grid.cells[grid_row][col]
+                                } else {
+                                    ' '
+                                };
+                                
+                                execute!(stdout(), Print(ch), ResetColor)?;
+                            }
+                        }
+                    }
+                }
+                
+                // Then highlight the cursor
+                if grid_row == self.excel_grid.cursor.1 {
+                    let cursor_col = self.excel_grid.cursor.0;
+                    if cursor_col < width as usize {
+                        execute!(
+                            stdout(),
+                            MoveTo(x + cursor_col as u16, y + row),
+                            SetBackgroundColor(Color::DarkBlue),
+                            SetForegroundColor(Color::White),
+                        )?;
+                        
+                        let ch = if grid_row < self.excel_grid.cells.len() && cursor_col < self.excel_grid.cells[grid_row].len() {
+                            self.excel_grid.cells[grid_row][cursor_col]
+                        } else {
+                            ' '
+                        };
+                        
+                        execute!(stdout(), Print(ch), ResetColor)?;
                     }
                 }
             }
@@ -1397,12 +1559,60 @@ impl UIRenderer {
     
     /// Handle keyboard input for Excel grid editing
     pub fn handle_excel_grid_input(&mut self, key: crossterm::event::KeyCode, shift: bool) {
+        // Only mark dirty for keys that actually change content
+        let needs_redraw = match key {
+            // These keys change content
+            crossterm::event::KeyCode::Char(_) |
+            crossterm::event::KeyCode::Delete |
+            crossterm::event::KeyCode::Backspace |
+            crossterm::event::KeyCode::Enter => true,
+            
+            // Arrow keys only need redraw if selecting (shift held)
+            crossterm::event::KeyCode::Up |
+            crossterm::event::KeyCode::Down |
+            crossterm::event::KeyCode::Left |
+            crossterm::event::KeyCode::Right => shift,
+            
+            // These don't change display
+            _ => false,
+        };
+        
         self.excel_grid.handle_key(key, shift);
+        
+        if needs_redraw {
+            self.right_panel_dirty = true;
+        }
     }
     
     /// Handle keyboard input with full modifiers for advanced editing
     pub fn handle_excel_grid_input_with_modifiers(&mut self, key: crossterm::event::KeyCode, shift: bool, ctrl: bool, alt: bool) {
+        // Only mark dirty for keys that actually change content
+        let needs_redraw = match key {
+            // Ctrl+V pastes content
+            crossterm::event::KeyCode::Char('v') if ctrl => true,
+            // Ctrl+X cuts content
+            crossterm::event::KeyCode::Char('x') if ctrl => true,
+            // Other ctrl+char combos might not change display
+            crossterm::event::KeyCode::Char(_) if ctrl => false,
+            // Regular chars change content
+            crossterm::event::KeyCode::Char(_) => true,
+            // Delete/Backspace change content
+            crossterm::event::KeyCode::Delete |
+            crossterm::event::KeyCode::Backspace |
+            crossterm::event::KeyCode::Enter => true,
+            // Arrow keys with shift (selection)
+            crossterm::event::KeyCode::Up |
+            crossterm::event::KeyCode::Down |
+            crossterm::event::KeyCode::Left |
+            crossterm::event::KeyCode::Right => shift,
+            _ => false,
+        };
+        
         self.excel_grid.handle_key_with_modifiers(key, shift, ctrl, alt);
+        
+        if needs_redraw {
+            self.right_panel_dirty = true;
+        }
     }
     
     /// Check if status message changed (for redraw detection)
@@ -1443,12 +1653,15 @@ impl UIRenderer {
             match event.kind {
                 MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                     self.excel_grid.handle_mouse_down(grid_col, grid_row);
+                    self.right_panel_dirty = true;  // Mark for redraw when selection starts
                 }
                 MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
                     self.excel_grid.handle_mouse_drag(grid_col, grid_row);
+                    self.right_panel_dirty = true;  // Mark for redraw during selection
                 }
                 MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
                     self.excel_grid.handle_mouse_up(grid_col, grid_row);
+                    self.right_panel_dirty = true;  // Mark for redraw when selection ends
                 }
                 _ => {}
             }
@@ -1502,6 +1715,7 @@ impl UIRenderer {
         self.debug_messages.clear();
         self.debug_scroll_offset = 0;
         self.image_sent = false; // Reset flag for new PDF
+        self.right_panel_dirty = true; // Mark right panel for redraw with new content
         
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
         eprintln!("[INFO] Left pane: lopdf-kitty rendering");
@@ -1520,10 +1734,10 @@ impl UIRenderer {
         
         // Render first page image - same size as chonker7
         self.add_debug_message("Rendering PDF with lopdf-kitty...".to_string());
-        let mut image = pdf_renderer::render_pdf_page(&pdf_path, 0, 800, 1000)?;  // Same as chonker7
+        let image = pdf_renderer::render_pdf_page(&pdf_path, 0, 800, 1000)?;  // Same as chonker7
         
-        // Apply dark mode filter for better visibility
-        image = self.apply_dark_mode_filter(image);
+        // Dark mode is already applied in the PDF renderer - don't double-invert!
+        // image = self.apply_dark_mode_filter(image);
         self.add_debug_message("PDF page rendered".to_string());
         
         // Use intelligent document-agnostic extraction - with fallback
