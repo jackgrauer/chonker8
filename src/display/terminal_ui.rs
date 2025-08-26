@@ -573,9 +573,6 @@ impl UIRenderer {
                     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
                     let encoded = BASE64.encode(&png_data);
                     
-                    // First, clear the terminal properly
-                    std::io::stdout().flush()?;
-                    
                     // Move cursor to position using crossterm, not raw escape codes
                     execute!(stdout(), MoveTo(x, y))?;
                     
@@ -583,7 +580,6 @@ impl UIRenderer {
                     use std::io::Write;
                     let clear_cmd = b"\x1b_Ga=d\x1b\\";
                     std::io::stdout().write_all(clear_cmd)?;
-                    std::io::stdout().flush()?;
                     
                     // Kitty protocol requires chunking for large images
                     // Maximum chunk size is 4096 bytes
@@ -631,11 +627,11 @@ impl UIRenderer {
                             cmd.extend_from_slice(b"\x1b\\");
                             
                             std::io::stdout().write_all(&cmd)?;
-                            std::io::stdout().flush()?;
                         }
                         
                     }
                     
+                    // Final flush after sending all image data
                     std::io::stdout().flush()?;
                     
                     Ok(())
