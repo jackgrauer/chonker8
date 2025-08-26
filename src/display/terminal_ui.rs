@@ -45,6 +45,7 @@ pub struct UIRenderer {
     kitty: KittyProtocol,
     current_image_id: Option<u32>,
     image_sent: bool,
+    first_render: bool,
 }
 
 impl UIRenderer {
@@ -96,6 +97,7 @@ impl UIRenderer {
             kitty,
             current_image_id: None,
             image_sent: false,
+            first_render: true,
         }
     }
     
@@ -140,18 +142,10 @@ impl UIRenderer {
     
     
     pub fn render(&mut self) -> Result<()> {
-        eprintln!("[DEBUG] render() called, current_screen: {:?}", self.current_screen);
-        eprintln!("[DEBUG] Has PDF image: {}", self.current_pdf_image.is_some());
-        eprintln!("[DEBUG] PDF path: {:?}", self.current_pdf_path);
-        let result = match self.current_screen {
+        match self.current_screen {
             Screen::FilePicker => self.render_file_picker_screen(),
-            Screen::PdfViewer => {
-                eprintln!("[DEBUG] Calling render_pdf_screen()");
-                self.render_pdf_screen()
-            },
-        };
-        eprintln!("[DEBUG] render() complete, result: {:?}", result.is_ok());
-        result
+            Screen::PdfViewer => self.render_pdf_screen(),
+        }
     }
     
     pub fn render_with_file_picker(&mut self, file_picker: &mut IntegratedFilePicker) -> Result<()> {
@@ -193,18 +187,26 @@ impl UIRenderer {
     }
     
     fn render_pdf_screen(&mut self) -> Result<()> {
-        eprintln!("[DEBUG] render_pdf_screen called");
         // Chonker7-style split view: PDF image on left, text extraction on right
         let (width, height) = terminal::size()?;
         let split_x = width / 2;
-        eprintln!("[DEBUG] Terminal size: {}x{}, split at {}", width, height, split_x);
         
-        execute!(
-            stdout(),
-            Clear(ClearType::All),
-            MoveTo(0, 0),
-            Hide
-        )?;
+        // Only clear screen on first render to prevent flicker
+        if self.first_render {
+            execute!(
+                stdout(),
+                Clear(ClearType::All),
+                MoveTo(0, 0),
+                Hide
+            )?;
+            self.first_render = false;
+        } else {
+            execute!(
+                stdout(),
+                MoveTo(0, 0),
+                Hide
+            )?;
+        }
         
         // Draw a clear vertical split line first
         execute!(stdout(), SetForegroundColor(Color::Cyan))?;
@@ -232,7 +234,6 @@ impl UIRenderer {
         )?;
         
         // Left Panel - PDF Render
-        eprintln!("[DEBUG] Rendering left panel (PDF)");
         execute!(stdout(), SetForegroundColor(Color::White))?;
         
         // Show PDF status
@@ -247,12 +248,6 @@ impl UIRenderer {
         
         // Render PDF content or image
         if self.current_pdf_image.is_some() {
-            eprintln!("[DEBUG] Have PDF image, attempting Kitty display");
-            let (img_w, img_h) = self.current_pdf_image.as_ref().map(|i| (i.width(), i.height())).unwrap();
-            eprintln!("[DEBUG] Image dimensions: {}x{}", img_w, img_h);
-            eprintln!("[DEBUG] Kitty supported: {}", self.kitty.is_supported());
-            eprintln!("[DEBUG] Display area: x=2, y=2, width={}, height={}", split_x - 4, height - 4);
-            
             // Try to display the PDF image in the left panel
             self.render_pdf_content(2, 2, split_x - 4, height - 4)?;
             
@@ -268,7 +263,6 @@ impl UIRenderer {
                 SetForegroundColor(Color::White)
             )?;
         } else {
-            eprintln!("[DEBUG] No PDF image loaded!");
             execute!(
                 stdout(),
                 MoveTo(2, 5),
@@ -276,7 +270,6 @@ impl UIRenderer {
                 Print("[ERROR: No PDF image loaded]")
             )?;
         }
-        eprintln!("[DEBUG] Left panel rendered");
         
         // Draw header for right panel
         execute!(
@@ -567,7 +560,6 @@ impl UIRenderer {
         if let Some(ref image) = self.current_pdf_image {
             // Always send the image - Kitty protocol handles replacing existing images
             // The clear command with same ID will replace the old one
-            eprintln!("[DEBUG] Sending Kitty image");
             self.image_sent = true;
             
             // Use inline Kitty implementation with correct protocol
@@ -643,13 +635,9 @@ impl UIRenderer {
                             std::io::stdout().flush()?;
                         }
                         
-                        eprintln!("[KITTY] Sent large image in {} chunks", chunks.len());
                     }
                     
                     std::io::stdout().flush()?;
-                    
-                    eprintln!("[KITTY] Sent image {}x{} at ({},{}), {} bytes encoded", 
-                             width, height, x, y, encoded.len());
                     
                     Ok(())
                 }
@@ -670,9 +658,6 @@ impl UIRenderer {
             let image_x = x + 2;
             let image_y = y + 2;
             
-            eprintln!("[DEBUG] Original: {}x{}, Display: {}x{}, Position: ({}, {})", 
-                     image.width(), image.height(), display_width, display_height, image_x, image_y);
-            
             // Move cursor to position
             execute!(
                 stdout(),
@@ -682,7 +667,6 @@ impl UIRenderer {
             // Send image at fixed position within panel
             match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
                 Ok(_) => {
-                    eprintln!("[DEBUG] ✅ KITTY IMAGE SENT SUCCESSFULLY!");
                 }
                 Err(e) => {
                     eprintln!("[ERROR] KITTY FAILED: {}", e);
@@ -702,7 +686,6 @@ impl UIRenderer {
             }
         } else {
             // No image - but this shouldn't happen
-            eprintln!("[ERROR] No PDF image loaded!");
             execute!(
                 stdout(),
                 MoveTo(x + 2, y + height/2),
@@ -742,11 +725,6 @@ impl UIRenderer {
                     let is_cursor = self.excel_grid.cursor == (grid_col, grid_row);
                     let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
                     
-                    // Debug first few cells
-                    if grid_row == 0 && grid_col < 5 && (is_cursor || is_selected) {
-                        eprintln!("[RENDER] Cell ({},{}) cursor={} selected={} selecting={}", 
-                                 grid_col, grid_row, is_cursor, is_selected, self.excel_grid.selecting);
-                    }
                     
                     // Apply colors for selection and cursor
                     if is_cursor && !self.excel_grid.selecting {
@@ -979,6 +957,11 @@ impl UIRenderer {
         self.excel_grid.handle_key_with_modifiers(key, shift, ctrl, alt);
     }
     
+    /// Check if status message changed (for redraw detection)
+    pub fn has_status_message(&self) -> bool {
+        self.excel_grid.get_status_message().is_some()
+    }
+    
     /// Check if Excel grid is in selection mode
     pub fn is_selecting(&self) -> bool {
         self.excel_grid.selecting
@@ -1085,13 +1068,11 @@ impl UIRenderer {
         
         // Render first page image - same size as chonker7
         self.add_debug_message("Rendering PDF with lopdf-kitty...".to_string());
-        eprintln!("[DEBUG] Rendering PDF with direct bitmap renderer...");
         let mut image = pdf_renderer::render_pdf_page(&pdf_path, 0, 800, 1000)?;  // Same as chonker7
         
         // Apply dark mode filter for better visibility
         image = self.apply_dark_mode_filter(image);
         self.add_debug_message("PDF page rendered".to_string());
-        eprintln!("[DEBUG] PDF page rendered");
         
         // Use intelligent document-agnostic extraction - with fallback
         self.add_debug_message("Creating analyzer...".to_string());

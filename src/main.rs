@@ -54,6 +54,7 @@ struct App {
     pdf_path: Option<String>,
     running: bool,
     last_processor_version: String,
+    last_render_time: std::time::Instant,
 }
 
 impl App {
@@ -80,6 +81,7 @@ impl App {
             pdf_path: None,
             running: true,
             last_processor_version: String::new(),
+            last_render_time: std::time::Instant::now(),
         })
     }
     
@@ -132,16 +134,12 @@ impl App {
             eprintln!("[DEBUG] Not a TTY, running in non-interactive mode");
         }
         
-        // Initial render
+        // Initial render - only render once
         eprintln!("[DEBUG] Initial render call");
         self.renderer.render()?;
+        self.needs_redraw = false;
         
-        // If PDF was loaded before run, render again with correct screen
-        if self.needs_redraw {
-            eprintln!("[DEBUG] needs_redraw=true, rendering again");
-            self.renderer.render()?;
-            self.needs_redraw = false;
-        } else {
+        {
             eprintln!("[DEBUG] needs_redraw=false, no second render");
         }
         
@@ -212,12 +210,19 @@ impl App {
                 }
             }
             
-            // Render if needed
+            // Render if needed with debouncing
             if self.needs_redraw {
-                // Pass the file picker reference to the renderer for file picker screen
-                // The renderer now has its own integrated file picker
-                self.renderer.render()?;
-                self.needs_redraw = false;
+                // Debounce rapid renders - only render if at least 16ms have passed (60 FPS)
+                let now = std::time::Instant::now();
+                let time_since_last_render = now.duration_since(self.last_render_time);
+                
+                if time_since_last_render >= Duration::from_millis(16) {
+                    self.renderer.render()?;
+                    self.needs_redraw = false;
+                    self.last_render_time = now;
+                } else {
+                    // Keep needs_redraw true to render on next iteration
+                }
             }
             
             // Handle input only if we're in a TTY
@@ -306,8 +311,43 @@ impl App {
             let shift_held = key.modifiers.contains(KeyModifiers::SHIFT);
             let ctrl_held = key.modifiers.contains(KeyModifiers::CONTROL);
             let alt_held = key.modifiers.contains(KeyModifiers::ALT);
-            self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
-            self.needs_redraw = true;
+            
+            // Only redraw for keys that actually change the display
+            match key.code {
+                // These keys always need redraw
+                KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Enter => {
+                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.needs_redraw = true;
+                }
+                // Arrow keys and selection only redraw if something changes
+                KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right |
+                KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
+                    let old_cursor = self.renderer.get_grid_cursor();
+                    let old_selecting = self.renderer.is_selecting();
+                    
+                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    
+                    let new_cursor = self.renderer.get_grid_cursor();
+                    let new_selecting = self.renderer.is_selecting();
+                    
+                    // Only redraw if cursor actually moved or selection changed
+                    if old_cursor != new_cursor || old_selecting != new_selecting {
+                        self.needs_redraw = true;
+                    }
+                }
+                // Escape only redraws if there was a selection
+                KeyCode::Esc => {
+                    if self.renderer.is_selecting() {
+                        self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                        self.needs_redraw = true;
+                    }
+                }
+                // Ignore other keys
+                _ => {
+                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    // Don't set needs_redraw for other keys
+                }
+            }
             return Ok(());
         }
         
@@ -364,23 +404,42 @@ impl App {
         // Handle mouse wheel scrolling on PDF viewer screen
         let screen = self.renderer.current_screen();
         if *screen == Screen::PdfViewer {
-            // First handle Excel grid mouse events
-            self.renderer.handle_mouse_for_excel_grid(mouse);
-            self.needs_redraw = true;
+            // Track if we need redraw
+            let mut should_redraw = false;
             
-            // Then handle scrolling
+            // Handle scrolling first
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
                     self.renderer.scroll_up();
-                    self.needs_redraw = true;
+                    should_redraw = true;
                 }
                 MouseEventKind::ScrollDown => {
                     self.renderer.scroll_down();
-                    self.needs_redraw = true;
+                    should_redraw = true;
+                }
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) |
+                MouseEventKind::Drag(crossterm::event::MouseButton::Left) |
+                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                    // Check if mouse is in the text area (right panel)
+                    let (term_width, _) = terminal::size().unwrap_or((80, 24));
+                    let split_col = term_width / 2;
+                    
+                    // Only handle and redraw if click is in text area
+                    if mouse.column >= split_col {
+                        self.renderer.handle_mouse_for_excel_grid(mouse);
+                        should_redraw = true;
+                    }
+                }
+                MouseEventKind::Down(_) | MouseEventKind::Up(_) => {
+                    // Ignore other mouse buttons
                 }
                 _ => {
-                    // Other mouse events handled by Excel grid
+                    // Ignore mouse move events to prevent flickering
                 }
+            }
+            
+            if should_redraw {
+                self.needs_redraw = true;
             }
         }
         
