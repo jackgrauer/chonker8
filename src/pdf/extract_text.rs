@@ -32,18 +32,33 @@ pub async fn extract_to_matrix(
     // Extract text with positions
     let char_positions = extract_text_with_positions(&document, page_dict)?;
     
-    // Map characters to grid positions
-    for (ch, x, y) in char_positions {
-        // Convert PDF coordinates to grid coordinates
-        // PDF coordinates are bottom-left origin, so flip y
-        let grid_x = ((x / page_width) * width as f32) as usize;
-        let grid_y = (((page_height - y) / page_height) * height as f32) as usize;
+    // Group characters into words for better formatting
+    let words = group_characters_into_words(&char_positions);
+    
+    // Place words on grid with better spacing
+    for word in words {
+        if word.chars.is_empty() {
+            continue;
+        }
         
-        // Clamp to grid bounds
-        if grid_x < width && grid_y < height {
-            grid[grid_y][grid_x] = ch;
+        // Calculate word position on grid
+        let start_x = ((word.x / page_width) * width as f32) as usize;
+        let y = (((page_height - word.y) / page_height) * height as f32) as usize;
+        
+        // Place the entire word
+        if y < height {
+            let mut x = start_x;
+            for ch in word.chars.chars() {
+                if x < width {
+                    grid[y][x] = ch;
+                    x += 1;
+                }
+            }
         }
     }
+    
+    // Post-process to clean up formatting
+    clean_up_grid(&mut grid);
     
     Ok(grid)
 }
@@ -180,6 +195,112 @@ fn get_content_data(document: &Document, contents: &Object) -> Result<Vec<u8>> {
             Ok(data)
         }
         _ => Ok(Vec::new())
+    }
+}
+
+// Structure to hold word information
+struct Word {
+    chars: String,
+    x: f32,
+    y: f32,
+}
+
+// Group characters into words based on proximity
+fn group_characters_into_words(char_positions: &[(char, f32, f32)]) -> Vec<Word> {
+    let mut words = Vec::new();
+    
+    if char_positions.is_empty() {
+        return words;
+    }
+    
+    let mut current_word = String::new();
+    let mut word_x = 0.0;
+    let mut word_y = 0.0;
+    let mut last_x = -1000.0;
+    let mut last_y = -1000.0;
+    
+    const SPACE_THRESHOLD: f32 = 8.0;  // Space between characters to consider new word
+    const LINE_THRESHOLD: f32 = 10.0;  // Vertical distance to consider new line
+    
+    for &(ch, x, y) in char_positions {
+        // Check if this is a new word or line
+        let is_new_word = (x - last_x).abs() > SPACE_THRESHOLD || 
+                          (y - last_y).abs() > LINE_THRESHOLD;
+        
+        if is_new_word && !current_word.is_empty() {
+            // Save the current word
+            words.push(Word {
+                chars: current_word.clone(),
+                x: word_x,
+                y: word_y,
+            });
+            current_word.clear();
+        }
+        
+        if current_word.is_empty() {
+            // Start of new word
+            word_x = x;
+            word_y = y;
+        }
+        
+        current_word.push(ch);
+        last_x = x;
+        last_y = y;
+    }
+    
+    // Don't forget the last word
+    if !current_word.is_empty() {
+        words.push(Word {
+            chars: current_word,
+            x: word_x,
+            y: word_y,
+        });
+    }
+    
+    words
+}
+
+// Clean up the grid to improve formatting
+fn clean_up_grid(grid: &mut Vec<Vec<char>>) {
+    let height = grid.len();
+    let width = if height > 0 { grid[0].len() } else { 0 };
+    
+    // Remove isolated characters (likely noise)
+    for y in 0..height {
+        for x in 0..width {
+            if grid[y][x] != ' ' {
+                // Check if character is isolated
+                let mut neighbor_count = 0;
+                for dy in -1i32..=1 {
+                    for dx in -1i32..=1 {
+                        if dx == 0 && dy == 0 { continue; }
+                        let ny = (y as i32 + dy) as usize;
+                        let nx = (x as i32 + dx) as usize;
+                        if ny < height && nx < width && grid[ny][nx] != ' ' {
+                            neighbor_count += 1;
+                        }
+                    }
+                }
+                // If character has no neighbors, it's likely noise
+                if neighbor_count == 0 && !grid[y][x].is_alphanumeric() {
+                    grid[y][x] = ' ';
+                }
+            }
+        }
+    }
+    
+    // Trim trailing spaces from each line
+    for row in grid.iter_mut() {
+        let mut last_char = row.len();
+        for (i, &ch) in row.iter().enumerate().rev() {
+            if ch != ' ' {
+                last_char = i + 1;
+                break;
+            }
+        }
+        for i in last_char..row.len() {
+            row[i] = ' ';
+        }
     }
 }
 

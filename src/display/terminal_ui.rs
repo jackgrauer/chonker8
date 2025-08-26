@@ -29,6 +29,11 @@ pub struct ExcelGrid {
     pub height: usize,
     clipboard: Option<Arc<Mutex<Clipboard>>>,
     status_message: Option<String>,
+    // Search functionality
+    search_query: String,
+    search_results: Vec<(usize, usize)>,  // (col, row) positions
+    search_current_index: usize,
+    searching: bool,
 }
 
 impl Clone for ExcelGrid {
@@ -44,6 +49,10 @@ impl Clone for ExcelGrid {
             height: self.height,
             clipboard,
             status_message: self.status_message.clone(),
+            search_query: self.search_query.clone(),
+            search_results: self.search_results.clone(),
+            search_current_index: self.search_current_index,
+            searching: self.searching,
         }
     }
 }
@@ -89,6 +98,10 @@ impl ExcelGrid {
             height,
             clipboard,
             status_message: None,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_current_index: 0,
+            searching: false,
         }
     }
     
@@ -121,12 +134,47 @@ impl ExcelGrid {
             height: grid_height,
             clipboard,
             status_message: None,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_current_index: 0,
+            searching: false,
         }
     }
     
     /// Handle keyboard input with modifiers
     pub fn handle_key_with_modifiers(&mut self, key: KeyCode, shift: bool, ctrl: bool, _alt: bool) {
+        // Handle search mode input first
+        if self.searching {
+            match key {
+                KeyCode::Esc => {
+                    self.exit_search();
+                }
+                KeyCode::Enter => {
+                    self.find_next();
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.perform_search();
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    self.perform_search();
+                }
+                _ => {}
+            }
+            return;
+        }
+        
         match key {
+            // Search functionality
+            KeyCode::Char('f') if ctrl => {
+                self.start_search();
+            }
+            
+            KeyCode::F(3) | KeyCode::Char('n') if ctrl => {
+                self.find_next();
+            }
+            
             // Basic cut/copy/paste only
             KeyCode::Char('c') if ctrl => {
                 self.copy_to_clipboard();
@@ -442,6 +490,92 @@ impl ExcelGrid {
     /// Clear status message
     pub fn clear_status_message(&mut self) {
         self.status_message = None;
+    }
+    
+    // Search functionality methods
+    
+    /// Start search mode
+    pub fn start_search(&mut self) {
+        self.searching = true;
+        self.search_query.clear();
+        self.search_results.clear();
+        self.search_current_index = 0;
+        self.status_message = Some("SEARCH: Type to search, Enter for next, ESC to exit".to_string());
+    }
+    
+    /// Exit search mode
+    pub fn exit_search(&mut self) {
+        self.searching = false;
+        self.search_results.clear();
+        self.status_message = Some("Search cancelled".to_string());
+    }
+    
+    /// Perform search and find all matches
+    pub fn perform_search(&mut self) {
+        if self.search_query.is_empty() {
+            self.search_results.clear();
+            self.status_message = Some("SEARCH: Type to search".to_string());
+            return;
+        }
+        
+        self.search_results.clear();
+        let query_lower = self.search_query.to_lowercase();
+        
+        // Search through all cells
+        for (row_idx, row) in self.cells.iter().enumerate() {
+            let row_text: String = row.iter().collect::<String>().to_lowercase();
+            
+            // Find all occurrences in this row
+            let mut start = 0;
+            while let Some(pos) = row_text[start..].find(&query_lower) {
+                let actual_pos = start + pos;
+                self.search_results.push((actual_pos, row_idx));
+                start = actual_pos + 1;
+            }
+        }
+        
+        if !self.search_results.is_empty() {
+            self.search_current_index = 0;
+            let (col, row) = self.search_results[0];
+            self.cursor = (col, row);
+            self.status_message = Some(format!("SEARCH: '{}' - {} matches (Enter for next)", 
+                                               self.search_query, 
+                                               self.search_results.len()));
+        } else {
+            self.status_message = Some(format!("SEARCH: '{}' - No matches found", self.search_query));
+        }
+    }
+    
+    /// Find next search result
+    pub fn find_next(&mut self) {
+        if self.search_results.is_empty() {
+            self.status_message = Some("No search results".to_string());
+            return;
+        }
+        
+        self.search_current_index = (self.search_current_index + 1) % self.search_results.len();
+        let (col, row) = self.search_results[self.search_current_index];
+        self.cursor = (col, row);
+        self.status_message = Some(format!("SEARCH: Match {}/{}", 
+                                           self.search_current_index + 1,
+                                           self.search_results.len()));
+    }
+    
+    /// Check if a position matches current search
+    pub fn is_search_match(&self, col: usize, row: usize) -> bool {
+        if !self.searching || self.search_query.is_empty() {
+            return false;
+        }
+        
+        // Check if this position is part of any search result
+        for &(result_col, result_row) in &self.search_results {
+            if result_row == row && 
+               col >= result_col && 
+               col < result_col + self.search_query.len() {
+                return true;
+            }
+        }
+        false
     }
     
     /// Insert text at cursor position
@@ -811,7 +945,7 @@ impl UIRenderer {
             // Excel grid status or shortcuts
             self.excel_grid.get_status_message()
                 .map(|msg| msg.to_string())
-                .unwrap_or_else(|| "F1:Help Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste".to_string()),
+                .unwrap_or_else(|| "F1:Help Ctrl-F:Find Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste".to_string()),
             
             // Navigation help
             "TAB:Switch ESC:Exit".to_string(),
@@ -1304,6 +1438,28 @@ impl UIRenderer {
                                 
                                 execute!(stdout(), Print(ch), ResetColor)?;
                             }
+                        }
+                    }
+                }
+                
+                // Highlight search results
+                if self.excel_grid.searching && !self.excel_grid.search_query.is_empty() {
+                    for col in 0..text_width as usize {
+                        if self.excel_grid.is_search_match(col, grid_row) {
+                            execute!(
+                                stdout(),
+                                MoveTo(x + text_start + col as u16, y + row),
+                                SetBackgroundColor(Color::Yellow),
+                                SetForegroundColor(Color::Black),
+                            )?;
+                            
+                            let ch = if grid_row < self.excel_grid.cells.len() && col < self.excel_grid.cells[grid_row].len() {
+                                self.excel_grid.cells[grid_row][col]
+                            } else {
+                                ' '
+                            };
+                            
+                            execute!(stdout(), Print(ch), ResetColor)?;
                         }
                     }
                 }
