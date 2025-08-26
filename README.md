@@ -48,7 +48,7 @@ Press **Tab** to cycle through:
 
 ## Features
 
-- **Fast extraction** - PDFium for quick basic text extraction
+- **Fast extraction** - pdftotext for reliable text extraction
 - **AI extraction** - Ferrules ML for understanding complex layouts
 - **Clean UI** - No redundant headers or electric colors
 - **Debug everything** - See ALL the processing that happens

@@ -7,7 +7,7 @@
   - `src/pdf_extraction/basic.rs`
   - `src/pdf_extraction/improved.rs`
   - `src/pdf_extraction/true_visual.rs`
-- Now using direct PDFium library path with fallback
+- Now using system PDF tools (pdftoppm, pdftotext)
 
 ### Removed Unused Imports ✅
 - `Context` from `document_understanding.rs`

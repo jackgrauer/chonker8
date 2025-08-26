@@ -3,7 +3,7 @@ use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
     execute,
-    style::{Print, ResetColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use nucleo::{Config, Nucleo, Utf32String};
@@ -64,33 +64,27 @@ impl IntegratedFilePicker {
             MoveTo(0, 0)
         )?;
 
-        // Draw header
-        let header_text = "🐹🐹🐹 Chonker8 Hot-Reload File Picker [TEST] 🐹🐹🐹";
+        // Draw header to match split screen style
         execute!(
             stdout(),
-            MoveTo(0, 0),
-            SetForegroundColor(ChonkerTheme::accent_load_file()),
-            Print(format!("  {:<width$}", header_text, width = (width - 2) as usize)),
-            ResetColor,
-            MoveTo(0, 1),
-            SetForegroundColor(ChonkerTheme::accent_load_file()),
-            Print(" ".repeat(width as usize)),
-            ResetColor,
-            Print("\n")
+            MoveTo(2, 0),
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
+            Print(" FILE BROWSER "),
+            ResetColor
         )?;
 
-        // Draw search box
+        // Draw search box with clean styling
         execute!(
             stdout(),
-            MoveTo(0, 3),
-            SetForegroundColor(ChonkerTheme::accent_text()),
-            Print("  🔍 Search: "),
-            SetForegroundColor(ChonkerTheme::text_primary()),
+            MoveTo(2, 2),
+            SetForegroundColor(Color::DarkGrey),
+            Print("Search: "),
+            SetForegroundColor(Color::White),
             Print(&self.query),
-            SetForegroundColor(ChonkerTheme::text_dim()),
+            SetForegroundColor(Color::DarkGrey),
             Print("_"),
-            ResetColor,
-            Print("\n\n")
+            ResetColor
         )?;
 
         // Get filtered results
@@ -131,7 +125,7 @@ impl IntegratedFilePicker {
                 path
             };
 
-            let line_pos = 6 + display_i as u16;
+            let line_pos = 4 + display_i as u16;
 
             // Move to the correct line and clear it
             execute!(
@@ -167,17 +161,18 @@ impl IntegratedFilePicker {
             if actual_index == self.selected_index {
                 execute!(
                     stdout(),
-                    SetForegroundColor(ChonkerTheme::success()),
-                    Print("  ▶ "),
-                    SetForegroundColor(ChonkerTheme::text_primary()),
+                    SetForegroundColor(Color::White),
+                    Print(" > "),
+                    SetBackgroundColor(Color::DarkBlue),
+                    SetForegroundColor(Color::White),
                     Print(&final_display),
                     ResetColor
                 )?;
             } else {
                 execute!(
                     stdout(),
-                    Print("    "),
-                    SetForegroundColor(ChonkerTheme::text_secondary()),
+                    Print("   "),
+                    SetForegroundColor(Color::DarkGrey),
                     Print(&final_display),
                     ResetColor
                 )?;
@@ -186,7 +181,7 @@ impl IntegratedFilePicker {
 
         // Clear any remaining lines
         for i in visible_matches.len()..max_display_items {
-            let line_pos = 6 + i as u16;
+            let line_pos = 4 + i as u16;
             execute!(
                 stdout(),
                 MoveTo(0, line_pos),
@@ -195,7 +190,7 @@ impl IntegratedFilePicker {
         }
 
         // Draw status and help
-        let help_line = (6 + max_display_items + 2) as u16;
+        let help_line = height - 3;
         let scroll_indicator = if all_matches.len() > max_display_items {
             format!("  Showing {}-{} of {} files", 
                 self.scroll_offset + 1, 
@@ -205,21 +200,21 @@ impl IntegratedFilePicker {
             format!("  {} files", all_matches.len())
         };
 
+        // Draw status bar at bottom
         execute!(
             stdout(),
-            MoveTo(0, help_line),
-            Clear(ClearType::CurrentLine),
-            SetForegroundColor(ChonkerTheme::text_dim()),
-            Print(&scroll_indicator),
+            MoveTo(0, height - 1),
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
+            Print(format!(" {:<width$} ", &scroll_indicator, width = width as usize - 2)),
             ResetColor
         )?;
-
+        
         execute!(
             stdout(),
-            MoveTo(0, help_line + 1),
-            Clear(ClearType::CurrentLine),
-            SetForegroundColor(ChonkerTheme::text_dim()),
-            Print("  🔥 INTEGRATED FILE PICKER  •  Tab: Next Screen  •  Esc: Exit"),
+            MoveTo(0, height - 2),
+            SetForegroundColor(Color::DarkGrey),
+            Print(" TAB: Next | ESC: Exit | UP/DOWN: Navigate | ENTER: Select"),
             ResetColor
         )?;
 

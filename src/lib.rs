@@ -25,7 +25,6 @@ pub mod display {
     pub mod terminal_ui;
     pub mod file_browser;
     pub mod theme;
-    pub mod excel_grid;
 }
 
 // Machine learning extraction (future work)

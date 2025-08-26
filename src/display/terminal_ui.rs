@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
     execute,
-    style::{Attribute, Attributes, Color, Print, ResetColor, SetAttributes, SetBackgroundColor, SetForegroundColor},
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
 };
 use std::io::{stdout, Write};
@@ -13,7 +13,501 @@ use image::DynamicImage;
 use crate::display::file_browser::IntegratedFilePicker;
 use crate::pdf::{page_renderer as pdf_renderer, extract_text as content_extractor};
 use crate::display::kitty_graphics::KittyProtocol;
-use crate::display::excel_grid::ExcelGrid;
+use crossterm::event::KeyCode;
+use std::cmp::{min, max};
+use arboard::Clipboard;
+use std::sync::{Arc, Mutex};
+
+// Excel-style grid editor for PDF text extraction - migrated from excel_grid.rs
+// Provides spreadsheet-like block selection and editing
+pub struct ExcelGrid {
+    pub cells: Vec<Vec<char>>,
+    pub cursor: (usize, usize),  // (col, row)
+    pub selecting: bool,
+    pub anchor: (usize, usize),   // selection start point
+    pub width: usize,
+    pub height: usize,
+    clipboard: Option<Arc<Mutex<Clipboard>>>,
+    status_message: Option<String>,
+}
+
+impl Clone for ExcelGrid {
+    fn clone(&self) -> Self {
+        // Create a new clipboard instance for the clone
+        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
+        Self {
+            cells: self.cells.clone(),
+            cursor: self.cursor,
+            selecting: self.selecting,
+            anchor: self.anchor,
+            width: self.width,
+            height: self.height,
+            clipboard,
+            status_message: self.status_message.clone(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ExcelGrid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExcelGrid")
+            .field("cursor", &self.cursor)
+            .field("selecting", &self.selecting)
+            .field("anchor", &self.anchor)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("status_message", &self.status_message)
+            .finish()
+    }
+}
+
+impl Default for ExcelGrid {
+    fn default() -> Self {
+        Self::new(80, 24)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SelectionMode {
+    Character,
+    Word,
+    Line,
+    Block,
+    All,
+}
+
+impl ExcelGrid {
+    pub fn new(width: usize, height: usize) -> Self {
+        let cells = vec![vec![' '; width]; height];
+        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
+        Self {
+            cells,
+            cursor: (0, 0),
+            selecting: false,
+            anchor: (0, 0),
+            width,
+            height,
+            clipboard,
+            status_message: None,
+        }
+    }
+    
+    /// Create grid from pdftotext output
+    pub fn from_pdftext(text: &str, width: usize) -> Self {
+        let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
+        let height = lines.len().max(24);
+        
+        let mut cells = Vec::with_capacity(height);
+        for line in lines.iter() {
+            let mut row: Vec<char> = line.chars().collect();
+            row.resize(width, ' ');
+            cells.push(row);
+        }
+        
+        // Ensure minimum height
+        while cells.len() < height {
+            cells.push(vec![' '; width]);
+        }
+        
+        let grid_height = cells.len();
+        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
+        
+        Self {
+            cells,
+            cursor: (0, 0),
+            selecting: false,
+            anchor: (0, 0),
+            width,
+            height: grid_height,
+            clipboard,
+            status_message: None,
+        }
+    }
+    
+    /// Handle keyboard input with modifiers
+    pub fn handle_key_with_modifiers(&mut self, key: KeyCode, shift: bool, ctrl: bool, _alt: bool) {
+        match key {
+            // Basic cut/copy/paste only
+            KeyCode::Char('c') if ctrl => {
+                self.copy_to_clipboard();
+            }
+            
+            KeyCode::Char('x') if ctrl => {
+                self.cut_to_clipboard();
+            }
+            
+            KeyCode::Char('v') if ctrl => {
+                self.paste_from_clipboard();
+            }
+            
+            // Simple arrow key movement
+            KeyCode::Up => {
+                if shift && !self.selecting {
+                    self.selecting = true;
+                    self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
+                }
+                self.cursor.1 = self.cursor.1.saturating_sub(1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
+            }
+            KeyCode::Down => {
+                if shift && !self.selecting {
+                    self.selecting = true;
+                    self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
+                }
+                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
+            }
+            KeyCode::Left => {
+                if shift && !self.selecting {
+                    self.selecting = true;
+                    self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
+                }
+                self.cursor.0 = self.cursor.0.saturating_sub(1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
+            }
+            KeyCode::Right => {
+                if shift && !self.selecting {
+                    self.selecting = true;
+                    self.anchor = self.cursor;
+                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
+                }
+                self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
+                if shift && self.selecting {
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+                } else if !shift {
+                    self.selecting = false;
+                }
+            }
+            
+            // Escape cancels selection
+            KeyCode::Esc => {
+                self.selecting = false;
+                self.status_message = Some("Selection cancelled".to_string());
+            }
+            
+            // Delete/Backspace
+            KeyCode::Delete => {
+                if self.selecting {
+                    self.clear_selection();
+                } else {
+                    self.cells[self.cursor.1][self.cursor.0] = ' ';
+                }
+            }
+            KeyCode::Backspace => {
+                if self.selecting {
+                    self.clear_selection();
+                } else if self.cursor.0 > 0 {
+                    self.cursor.0 -= 1;
+                    self.cells[self.cursor.1][self.cursor.0] = ' ';
+                }
+            }
+            
+            // Character input - handle both ctrl shortcuts and regular typing
+            KeyCode::Char(c) if !ctrl => {
+                // Regular typing (not a ctrl shortcut)
+                if self.selecting {
+                    // Replace all characters in selected block
+                    let (x1, y1, x2, y2) = self.get_selection_bounds();
+                    for y in y1..=y2 {
+                        for x in x1..=x2 {
+                            if y < self.cells.len() && x < self.cells[y].len() {
+                                self.cells[y][x] = c;
+                            }
+                        }
+                    }
+                    self.selecting = false;
+                    self.status_message = Some(format!("Replaced selection with '{}'", c));
+                } else {
+                    // Type at cursor
+                    if self.cursor.1 < self.cells.len() && self.cursor.0 < self.cells[self.cursor.1].len() {
+                        self.cells[self.cursor.1][self.cursor.0] = c;
+                        // Move cursor right after typing
+                        self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
+                    }
+                }
+            }
+            
+            // Home/End for line navigation
+            KeyCode::Home => {
+                self.cursor.0 = 0;
+            }
+            KeyCode::End => {
+                // Find last non-space character in current line
+                if self.cursor.1 < self.cells.len() {
+                    let line = &self.cells[self.cursor.1];
+                    for i in (0..self.width).rev() {
+                        if line[i] != ' ' {
+                            self.cursor.0 = (i + 1).min(self.width - 1);
+                            return;
+                        }
+                    }
+                    self.cursor.0 = 0;
+                }
+            }
+            
+            // Enter key - move to next line
+            KeyCode::Enter => {
+                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
+                self.cursor.0 = 0;
+            }
+            
+            // Page Up/Down
+            KeyCode::PageUp => {
+                self.cursor.1 = self.cursor.1.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                self.cursor.1 = (self.cursor.1 + 10).min(self.height - 1);
+            }
+            
+            _ => {}
+        }
+    }
+    
+    /// Clear the selected block
+    pub fn clear_selection(&mut self) {
+        let (x1, y1, x2, y2) = self.get_selection_bounds();
+        for y in y1..=y2 {
+            for x in x1..=x2 {
+                if y < self.cells.len() && x < self.cells[y].len() {
+                    self.cells[y][x] = ' ';
+                }
+            }
+        }
+        self.selecting = false;
+    }
+    
+    /// Get normalized selection bounds (x1, y1, x2, y2)
+    pub fn get_selection_bounds(&self) -> (usize, usize, usize, usize) {
+        (
+            min(self.anchor.0, self.cursor.0),
+            min(self.anchor.1, self.cursor.1),
+            max(self.anchor.0, self.cursor.0),
+            max(self.anchor.1, self.cursor.1),
+        )
+    }
+    
+    /// Check if a position is within the selection
+    pub fn is_selected(&self, x: usize, y: usize) -> bool {
+        if !self.selecting {
+            return false;
+        }
+        let (x1, y1, x2, y2) = self.get_selection_bounds();
+        let selected = x >= x1 && x <= x2 && y >= y1 && y <= y2;
+        selected
+    }
+    
+    /// Get the content as a string
+    pub fn to_string(&self) -> String {
+        self.cells
+            .iter()
+            .map(|row| row.iter().collect::<String>().trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    
+    /// Handle keyboard input (backward compatibility wrapper)
+    pub fn handle_key(&mut self, key: KeyCode, shift_held: bool) {
+        self.handle_key_with_modifiers(key, shift_held, false, false);
+    }
+    
+    /// Copy selection to system clipboard
+    pub fn copy_to_clipboard(&mut self) {
+        if !self.selecting {
+            self.status_message = Some("ERROR: No selection to copy".to_string());
+            return;
+        }
+        
+        let text = self.copy_selection();
+        let _text_preview = if text.len() > 20 {
+            format!("{}...", text.chars().take(20).collect::<String>())
+        } else {
+            text.clone()
+        };
+        
+        if let Some(clipboard) = self.clipboard.clone() {
+            if let Ok(mut clip) = clipboard.lock() {
+                match clip.set_text(&text) {
+                    Ok(_) => {
+                        self.status_message = Some(format!("COPIED {} chars", text.len()));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("COPY FAILED: {}", e));
+                    }
+                }
+            } else {
+                self.status_message = Some("ERROR: Clipboard locked".to_string());
+            }
+        } else {
+            self.status_message = Some("ERROR: No clipboard".to_string());
+        }
+    }
+    
+    /// Cut selection to clipboard
+    pub fn cut_to_clipboard(&mut self) {
+        if !self.selecting {
+            self.status_message = Some("ERROR: No selection to cut".to_string());
+            return;
+        }
+        
+        // Copy first
+        let text = self.copy_selection();
+        let chars_count = text.len();
+        
+        if let Some(clipboard) = self.clipboard.clone() {
+            if let Ok(mut clip) = clipboard.lock() {
+                match clip.set_text(&text) {
+                    Ok(_) => {
+                        // Clear after successful copy
+                        self.clear_selection();
+                        self.status_message = Some(format!("CUT: {} chars removed", chars_count));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("CUT FAILED: {}", e));
+                    }
+                }
+            } else {
+                self.status_message = Some("ERROR: Clipboard locked".to_string());
+            }
+        } else {
+            self.status_message = Some("ERROR: No clipboard".to_string());
+        }
+    }
+    
+    /// Paste from system clipboard
+    pub fn paste_from_clipboard(&mut self) {
+        if let Some(clipboard) = self.clipboard.clone() {
+            if let Ok(mut clip) = clipboard.lock() {
+                match clip.get_text() {
+                    Ok(text) => {
+                        self.paste_text(&text);
+                        self.status_message = Some(format!("PASTED {} chars", text.len()));
+                    }
+                    Err(_) => {
+                        self.status_message = Some("CLIPBOARD EMPTY".to_string());
+                    }
+                }
+            } else {
+                self.status_message = Some("ERROR: Clipboard locked".to_string());
+            }
+        } else {
+            self.status_message = Some("ERROR: No clipboard".to_string());
+        }
+    }
+    
+    /// Get current status message
+    pub fn get_status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
+    }
+    
+    /// Handle mouse events for selection
+    pub fn handle_mouse_down(&mut self, col: usize, row: usize) {
+        // Start selection at clicked position
+        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
+        self.anchor = self.cursor;
+        self.selecting = false;  // Will become true on drag
+        self.status_message = Some(format!("POS: {},{}", col + 1, row + 1));
+    }
+    
+    /// Handle mouse drag for selection
+    pub fn handle_mouse_drag(&mut self, col: usize, row: usize) {
+        // Update cursor position and enable selection
+        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
+        if !self.selecting && (self.cursor != self.anchor) {
+            self.selecting = true;
+        }
+        
+        if self.selecting {
+            let (x1, y1, x2, y2) = self.get_selection_bounds();
+            self.status_message = Some(format!("SELECTING: {},{} to {},{}", x1 + 1, y1 + 1, x2 + 1, y2 + 1));
+        }
+    }
+    
+    /// Handle mouse release
+    pub fn handle_mouse_up(&mut self, col: usize, row: usize) {
+        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
+        if self.selecting {
+            let (x1, y1, x2, y2) = self.get_selection_bounds();
+            self.status_message = Some(format!("SELECTED: {},{} to {},{}", x1 + 1, y1 + 1, x2 + 1, y2 + 1));
+        }
+    }
+    
+    /// Clear status message
+    pub fn clear_status_message(&mut self) {
+        self.status_message = None;
+    }
+    
+    /// Insert text at cursor position
+    pub fn insert_text(&mut self, text: &str) {
+        for ch in text.chars() {
+            if ch == '\n' {
+                // Move to next line
+                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
+                self.cursor.0 = 0;
+            } else if ch == '\t' {
+                // Tab moves 4 spaces
+                self.cursor.0 = (self.cursor.0 + 4).min(self.width - 1);
+            } else {
+                // Insert character
+                if self.cursor.1 < self.cells.len() && self.cursor.0 < self.cells[self.cursor.1].len() {
+                    self.cells[self.cursor.1][self.cursor.0] = ch;
+                    self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
+                }
+            }
+        }
+    }
+    
+    /// Copy selected text to string
+    pub fn copy_selection(&self) -> String {
+        if !self.selecting {
+            return String::new();
+        }
+        
+        let (x1, y1, x2, y2) = self.get_selection_bounds();
+        let mut result = Vec::new();
+        
+        for y in y1..=y2 {
+            let mut line = String::new();
+            for x in x1..=x2 {
+                if y < self.cells.len() && x < self.cells[y].len() {
+                    line.push(self.cells[y][x]);
+                }
+            }
+            // Don't trim if it's all spaces - might be intentional
+            result.push(line);
+        }
+        
+        result.join("\n")
+    }
+    
+    /// Replace selection with text
+    pub fn paste_text(&mut self, text: &str) {
+        if self.selecting {
+            self.clear_selection();
+        }
+        self.insert_text(text);
+    }
+}
+
+// End of ExcelGrid implementation
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -67,9 +561,9 @@ impl UIRenderer {
         
         // Kitty is MANDATORY for this viewer
         if kitty.is_supported() {
-            eprintln!("[DEBUG] ✅ Kitty graphics protocol ACTIVE!");
+            eprintln!("[DEBUG] Kitty graphics protocol ACTIVE");
         } else {
-            eprintln!("[WARNING] ⚠️  Kitty not detected - PDF images require Kitty terminal!");
+            eprintln!("[WARNING] Kitty not detected - PDF images require Kitty terminal");
             eprintln!("[WARNING] Run with: kitty ./target/release/chonker8-hot [pdf]");
         }
         
@@ -173,7 +667,7 @@ impl UIRenderer {
                 Clear(ClearType::All),
                 MoveTo(0, 0),
                 SetForegroundColor(crossterm::style::Color::Yellow),
-                Print("⚠️ File picker not available - using fallback"),
+                Print("[!] File picker not available - using fallback"),
                 ResetColor,
                 MoveTo(0, 2),
                 Print("Tab: Next Screen • Esc: Exit")
@@ -211,29 +705,36 @@ impl UIRenderer {
             )?;
         }
         
-        // Draw a clear vertical split line first
-        execute!(stdout(), SetForegroundColor(Color::Cyan))?;
-        for y in 0..height - 1 {
-            execute!(stdout(), MoveTo(split_x, y), Print("│"))?;
+        // Draw a simple vertical split
+        execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
+        for y in 1..height - 1 {
+            execute!(stdout(), MoveTo(split_x, y), Print("|"))?;
         }
         
-        // Draw panel headers
+        // Clear top line for headers
+        execute!(
+            stdout(),
+            MoveTo(0, 0),
+            Clear(ClearType::CurrentLine)
+        )?;
+        
+        // Panel titles
         execute!(
             stdout(),
             MoveTo(2, 0),
-            SetForegroundColor(Color::Yellow),
-            SetAttributes(Attributes::from(Attribute::Bold)),
-            Print("◀ PDF RENDER (lopdf→kitty) ▶"),
-            SetAttributes(Attributes::from(Attribute::Reset))
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
+            Print(" PDF DOCUMENT "),
+            ResetColor
         )?;
         
         execute!(
             stdout(),
             MoveTo(split_x + 2, 0),
-            SetForegroundColor(Color::Green),
-            SetAttributes(Attributes::from(Attribute::Bold)),
-            Print("◀ TEXT EXTRACTION (pdftotext) ▶"),
-            SetAttributes(Attributes::from(Attribute::Reset))
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
+            Print(" TEXT EDITOR "),
+            ResetColor
         )?;
         
         // Left Panel - PDF Render
@@ -270,30 +771,20 @@ impl UIRenderer {
                 stdout(),
                 MoveTo(2, 5),
                 SetForegroundColor(Color::Red),
-                Print("[ERROR: No PDF image loaded]")
+                Print("ERROR: No PDF image loaded"),
+                ResetColor
             )?;
         }
         
-        // Draw header for right panel
-        execute!(
-            stdout(),
-            MoveTo(split_x + 2, 0),
-            SetForegroundColor(Color::Green),
-            SetAttributes(Attributes::from(Attribute::Bold)),
-            Print("◀ TEXT EXTRACTION (editable) ▶"),
-            SetAttributes(Attributes::from(Attribute::Reset))
-        )?;
+        // Right panel header is already drawn above with the border
         
-        // Show extraction metadata if available
+        // Show extraction method in a clean way
         if let Some(method) = &self.extraction_method {
             execute!(
                 stdout(),
                 MoveTo(split_x + 2, 1),
                 SetForegroundColor(Color::DarkGrey),
-                Print(format!("Method: {} | Quality: {:.0}%", 
-                    method,
-                    self.extraction_quality.unwrap_or(0.0) * 100.0
-                )),
+                Print(format!("[{}]", method.to_uppercase())),
                 ResetColor
             )?;
         }
@@ -303,7 +794,7 @@ impl UIRenderer {
         
         // Status bar with Excel grid status
         let mut status_text = if let Some(path) = &self.current_pdf_path {
-            format!("PDF: {} | Page: {}/{}", 
+            format!("File: {} │ Page {}/{}", 
                 path.file_name().unwrap_or_default().to_string_lossy(),
                 self.current_page, 
                 self.total_pages)
@@ -313,14 +804,17 @@ impl UIRenderer {
         
         // Add Excel grid status message if available
         if let Some(msg) = self.excel_grid.get_status_message() {
-            status_text.push_str(&format!(" | {}", msg));
+            status_text.push_str(&format!(" │ {}", msg));
         } else {
             // Show basic shortcuts only
-            status_text.push_str(" | ^C:Copy ^X:Cut ^V:Paste");
+            status_text.push_str(" │ F1:Help Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste");
         }
         
-        status_text.push_str(" | Tab:Switch • Esc:Exit");
+        status_text.push_str(" │ TAB:Switch ESC:Exit");
         
+        // No bottom border needed
+        
+        // Status bar
         execute!(
             stdout(),
             MoveTo(0, height - 1),
@@ -475,14 +969,13 @@ impl UIRenderer {
             execute!(stdout(), MoveTo(x + width - 1, y + height - 1), Print(br))?;
         }
         
-        // Draw title with rendering method indicator and scroll info
-        let title = format!(" 📄 PDF Page {}/{} [lopdf-vello-kitty] Scroll: {} ", 
-                          self.current_page, self.total_pages, self.scroll_offset);
+        // Draw title with clean DOS-style formatting
+        let title = format!(" PAGE {}/{} ", self.current_page, self.total_pages);
         execute!(
             stdout(),
             MoveTo(x + 2, y),
-            SetBackgroundColor(Color::Rgb { r: 30, g: 30, b: 40 }),
-            SetForegroundColor(Color::Rgb { r: 100, g: 200, b: 255 }),
+            SetBackgroundColor(Color::DarkBlue),
+            SetForegroundColor(Color::White),
             Print(&title),
             ResetColor
         )?;
@@ -676,7 +1169,7 @@ impl UIRenderer {
                         stdout(),
                         MoveTo(x + 2, y + height/2),
                         SetForegroundColor(Color::Red),
-                        Print("⚠️  KITTY ERROR ⚠️"),
+                        Print("[ KITTY ERROR ]"),
                         MoveTo(x + 2, y + height/2 + 2),
                         Print(&format!("Error: {}", e)),
                         SetForegroundColor(Color::White)
@@ -689,7 +1182,7 @@ impl UIRenderer {
                 stdout(),
                 MoveTo(x + 2, y + height/2),
                 SetForegroundColor(Color::Red),
-                Print("⚠️  NO PDF IMAGE ⚠️"),
+                Print("[ NO PDF IMAGE ]"),
                 SetForegroundColor(Color::White)
             )?;
         }
@@ -1153,39 +1646,8 @@ impl UIRenderer {
         self.extraction_quality = Some(extraction_result.quality_score);
         self.extraction_timestamp = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
         
-        // Create metadata header with better formatting
-        let filename = pdf_path.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .chars()
-            .take(60)
-            .collect::<String>();
-        
-        let metadata_header = format!(
-            "╔════════════════════════════════════════════════════════════════════════════════╗\n\
-             ║ PDF EXTRACTION METADATA                                                        ║\n\
-             ╠════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ File: {:<73}║\n\
-             ║ Page: {}/{:<70}║\n\
-             ║ Method: {:<72}║\n\
-             ║ Quality Score: {:.1}%{:<64}║\n\
-             ║ Text Coverage: {:.1}%  |  Image Coverage: {:.1}%  |  Has Tables: {:<20}║\n\
-             ║ Extracted: {:<68}║\n\
-             ╚════════════════════════════════════════════════════════════════════════════════╝\n\n",
-            filename,
-            self.current_page,
-            self.total_pages,
-            format!("{:?}", extraction_result.method),
-            extraction_result.quality_score * 100.0,
-            "",
-            fingerprint.text_coverage * 100.0,
-            fingerprint.image_coverage * 100.0,
-            if fingerprint.has_tables { "Yes" } else { "No" },
-            self.extraction_timestamp.as_ref().unwrap()
-        );
-        
-        // Combine metadata with extracted text
-        let text_with_metadata = format!("{}{}", metadata_header, extraction_result.text);
+        // Just use the extracted text directly, no metadata box
+        let text_with_metadata = extraction_result.text.clone();
         
         // Convert extracted text to grid format for display
         let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);

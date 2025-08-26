@@ -14,7 +14,7 @@ use std::io::{stdout, Write};
 use std::path::PathBuf;
 use image::DynamicImage;
 use crate::display::kitty_graphics::KittyProtocol;
-use crate::display::excel_grid::ExcelGrid;
+use crate::display::terminal_ui::ExcelGrid;
 
 pub struct ABComparisonExcel {
     // PDF side

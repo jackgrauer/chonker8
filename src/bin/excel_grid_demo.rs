@@ -1,6 +1,6 @@
 // Excel Grid Demo - Beautiful Kitty terminal rendering
 use anyhow::Result;
-use chonker8::display::excel_grid::ExcelGrid;
+use chonker8::display::terminal_ui::ExcelGrid;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
