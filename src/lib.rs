@@ -6,7 +6,6 @@
 pub mod core {
     pub mod config;
     pub mod hot_reload;
-    pub mod old_config;
 }
 
 // PDF processing - THIS IS WHAT WORKS!
@@ -26,9 +25,6 @@ pub mod display {
     pub mod file_browser;
     pub mod theme;
 }
-
-// Machine learning extraction (future work)
-pub mod ml_extraction;
 
 // Storage
 pub mod storage;

@@ -18,13 +18,9 @@ crossterm = "0.27"
 toml = "0.8"
 atty = "0.2"
 
-# PDF extraction
-tokenizers = { version = "0.19", features = ["onig"] }
-ort = { version = "2.0.0-rc.10", features = ["coreml"] }
-ndarray = "0.15"
+# PDF processing
 image = "0.25"
 tempfile = "3.8"
-regex = "1.10"
 
 # PDF parsing (for page counting only - rendering done by pdftoppm)
 lopdf = "0.33"
@@ -56,18 +52,6 @@ path = "src/main.rs"
 [[bin]]
 name = "chonker8-hot"
 path = "src/main.rs"
-
-# [[bin]]
-# name = "pdf-processor"
-# path = "src/bin/pdf_processor.rs"
-
-# [[bin]]
-# name = "test-extraction"
-# path = "src/bin/test_extraction.rs"
-
-# [[bin]]
-# name = "chonker8-demo"
-# path = "src/bin/chonker8_demo.rs"
 
 [[bin]]
 name = "excel-grid-demo"

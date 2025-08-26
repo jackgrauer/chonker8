@@ -321,8 +321,18 @@ impl App {
             
             // Only redraw for keys that actually change the display
             match key.code {
+                // Ctrl+F for search needs special handling
+                KeyCode::Char('f') if ctrl_held => {
+                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.needs_redraw = true;
+                }
                 // These keys always need redraw
                 KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Enter => {
+                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.needs_redraw = true;
+                }
+                // F3 for search
+                KeyCode::F(3) => {
                     self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     self.needs_redraw = true;
                 }
@@ -342,10 +352,12 @@ impl App {
                         self.needs_redraw = true;
                     }
                 }
-                // Escape only redraws if there was a selection
+                // Escape only redraws if there was a selection or searching
                 KeyCode::Esc => {
-                    if self.renderer.is_selecting() {
-                        self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    let was_selecting = self.renderer.is_selecting();
+                    let was_searching = self.renderer.is_searching();
+                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    if was_selecting || was_searching {
                         self.needs_redraw = true;
                     }
                 }

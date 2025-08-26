@@ -17,6 +17,7 @@ use crossterm::event::KeyCode;
 use std::cmp::{min, max};
 use arboard::Clipboard;
 use std::sync::{Arc, Mutex};
+use nucleo::{Nucleo, Config as NucleoConfig};
 
 // Excel-style grid editor for PDF text extraction - migrated from excel_grid.rs
 // Provides spreadsheet-like block selection and editing
@@ -150,13 +151,23 @@ impl ExcelGrid {
                     self.exit_search();
                 }
                 KeyCode::Enter => {
-                    self.find_next();
+                    if shift {
+                        self.find_previous();
+                    } else {
+                        self.find_next();
+                    }
                 }
                 KeyCode::Backspace => {
                     self.search_query.pop();
                     self.perform_search();
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Char('n') if ctrl && shift => {
+                    self.find_previous();
+                }
+                KeyCode::Char('n') if ctrl => {
+                    self.find_next();
+                }
+                KeyCode::Char(c) if !ctrl => {
                     self.search_query.push(c);
                     self.perform_search();
                 }
@@ -171,7 +182,15 @@ impl ExcelGrid {
                 self.start_search();
             }
             
-            KeyCode::F(3) | KeyCode::Char('n') if ctrl => {
+            KeyCode::F(3) => {
+                if !self.searching {
+                    self.start_search();
+                } else {
+                    self.find_next();
+                }
+            }
+            
+            KeyCode::Char('n') if ctrl => {
                 self.find_next();
             }
             
@@ -500,7 +519,7 @@ impl ExcelGrid {
         self.search_query.clear();
         self.search_results.clear();
         self.search_current_index = 0;
-        self.status_message = Some("SEARCH: Type to search, Enter for next, ESC to exit".to_string());
+        self.status_message = Some("🔍 SEARCH: Type to search, Enter/Shift+Enter to navigate, ESC to exit".to_string());
     }
     
     /// Exit search mode
@@ -510,7 +529,7 @@ impl ExcelGrid {
         self.status_message = Some("Search cancelled".to_string());
     }
     
-    /// Perform search and find all matches
+    /// Perform search and find all matches (with fuzzy search support)
     pub fn perform_search(&mut self) {
         if self.search_query.is_empty() {
             self.search_results.clear();
@@ -519,9 +538,12 @@ impl ExcelGrid {
         }
         
         self.search_results.clear();
-        let query_lower = self.search_query.to_lowercase();
         
-        // Search through all cells
+        // Try exact match first for better performance on simple searches
+        let query_lower = self.search_query.to_lowercase();
+        let mut found_exact = false;
+        
+        // Search through all cells for exact matches
         for (row_idx, row) in self.cells.iter().enumerate() {
             let row_text: String = row.iter().collect::<String>().to_lowercase();
             
@@ -530,7 +552,52 @@ impl ExcelGrid {
             while let Some(pos) = row_text[start..].find(&query_lower) {
                 let actual_pos = start + pos;
                 self.search_results.push((actual_pos, row_idx));
+                found_exact = true;
                 start = actual_pos + 1;
+            }
+        }
+        
+        // If no exact matches, try fuzzy search with Nucleo
+        if !found_exact && self.search_query.len() >= 2 {
+            // Create a temporary Nucleo matcher for fuzzy search
+            let mut nucleo = Nucleo::<(usize, usize, String)>::new(
+                NucleoConfig::DEFAULT,
+                Arc::new(|| {}),
+                None,
+                1,
+            );
+            
+            let injector = nucleo.injector();
+            
+            // Add all text positions as searchable items
+            for (row_idx, row) in self.cells.iter().enumerate() {
+                let row_text: String = row.iter().collect();
+                // Break row into words for better fuzzy matching
+                for word in row_text.split_whitespace() {
+                    if let Some(word_start) = row_text.find(word) {
+                        injector.push((word_start, row_idx, word.to_string()), |_, cols| {
+                            cols[0] = word.clone().into();
+                        });
+                    }
+                }
+            }
+            
+            // Run the fuzzy search
+            nucleo.tick(10);
+            nucleo.pattern.reparse(
+                0,
+                &self.search_query,  // Pass the query string directly
+                nucleo::pattern::CaseMatching::Ignore,
+                nucleo::pattern::Normalization::Smart,
+                false,
+            );
+            nucleo.tick(10);
+            
+            // Get fuzzy matches
+            let snapshot = nucleo.snapshot();
+            for item in snapshot.matched_items(..).take(20) {
+                let (col, row, _) = &item.data;
+                self.search_results.push((*col, *row));
             }
         }
         
@@ -538,9 +605,11 @@ impl ExcelGrid {
             self.search_current_index = 0;
             let (col, row) = self.search_results[0];
             self.cursor = (col, row);
-            self.status_message = Some(format!("SEARCH: '{}' - {} matches (Enter for next)", 
-                                               self.search_query, 
-                                               self.search_results.len()));
+            let match_type = if found_exact { "exact" } else { "fuzzy" };
+            self.status_message = Some(format!("SEARCH: '{}' - {} {} matches (Enter for next)", 
+                                               self.search_query,
+                                               self.search_results.len(),
+                                               match_type));
         } else {
             self.status_message = Some(format!("SEARCH: '{}' - No matches found", self.search_query));
         }
@@ -554,6 +623,26 @@ impl ExcelGrid {
         }
         
         self.search_current_index = (self.search_current_index + 1) % self.search_results.len();
+        let (col, row) = self.search_results[self.search_current_index];
+        self.cursor = (col, row);
+        self.status_message = Some(format!("SEARCH: Match {}/{}", 
+                                           self.search_current_index + 1,
+                                           self.search_results.len()));
+    }
+    
+    /// Find previous search result
+    pub fn find_previous(&mut self) {
+        if self.search_results.is_empty() {
+            self.status_message = Some("No search results".to_string());
+            return;
+        }
+        
+        if self.search_current_index == 0 {
+            self.search_current_index = self.search_results.len() - 1;
+        } else {
+            self.search_current_index -= 1;
+        }
+        
         let (col, row) = self.search_results[self.search_current_index];
         self.cursor = (col, row);
         self.status_message = Some(format!("SEARCH: Match {}/{}", 
@@ -1559,6 +1648,57 @@ impl UIRenderer {
             }
         }
         
+        // Render search box overlay if searching
+        if self.excel_grid.searching {
+            // Draw search box in the middle of the text panel
+            let box_width = 60.min(width - 4);
+            let box_height = 3;
+            let box_x = x + (width - box_width) / 2;
+            let box_y = y + (height / 2).saturating_sub(1);
+            
+            // Draw box background
+            execute!(stdout(), SetBackgroundColor(Color::DarkGrey))?;
+            for row in 0..box_height {
+                execute!(
+                    stdout(),
+                    MoveTo(box_x, box_y + row),
+                    Print(" ".repeat(box_width as usize))
+                )?;
+            }
+            
+            // Draw border
+            execute!(
+                stdout(),
+                SetForegroundColor(Color::Yellow),
+                MoveTo(box_x, box_y),
+                Print("╔"),
+                Print("═".repeat((box_width - 2) as usize)),
+                Print("╗"),
+                MoveTo(box_x, box_y + 1),
+                Print("║"),
+                MoveTo(box_x + box_width - 1, box_y + 1),
+                Print("║"),
+                MoveTo(box_x, box_y + 2),
+                Print("╚"),
+                Print("═".repeat((box_width - 2) as usize)),
+                Print("╝")
+            )?;
+            
+            // Draw search prompt and query
+            let search_text = format!("🔍 Search: {}_", self.excel_grid.search_query);
+            let text_x = box_x + 2;
+            let text_y = box_y + 1;
+            
+            execute!(
+                stdout(),
+                MoveTo(text_x, text_y),
+                SetBackgroundColor(Color::DarkGrey),
+                SetForegroundColor(Color::White),
+                Print(&search_text[..search_text.len().min((box_width - 4) as usize)]),
+                ResetColor
+            )?;
+        }
+        
         Ok(())
     }
     
@@ -1760,6 +1900,11 @@ impl UIRenderer {
         self.excel_grid.selecting
     }
     
+    /// Check if Excel grid is in search mode
+    pub fn is_searching(&self) -> bool {
+        self.excel_grid.searching
+    }
+    
     /// Get Excel grid cursor position
     pub fn get_grid_cursor(&self) -> (usize, usize) {
         self.excel_grid.cursor
@@ -1844,8 +1989,6 @@ impl UIRenderer {
     }
     
     pub fn load_pdf(&mut self, pdf_path: PathBuf) -> Result<()> {
-        use crate::ml_extraction::{DocumentAnalyzer, PageFingerprint};
-        
         // Clear debug messages for new PDF load
         self.debug_messages.clear();
         self.debug_scroll_offset = 0;
@@ -1875,36 +2018,7 @@ impl UIRenderer {
         // image = self.apply_dark_mode_filter(image);
         self.add_debug_message("PDF page rendered".to_string());
         
-        // Use intelligent document-agnostic extraction - with fallback
-        self.add_debug_message("Creating analyzer...".to_string());
-        eprintln!("[DEBUG] Creating analyzer...");
-        
-        let fingerprint = match DocumentAnalyzer::new() {
-            Ok(analyzer) => {
-                self.add_debug_message("Analyzing page...".to_string());
-                eprintln!("[DEBUG] Analyzing page...");
-                match analyzer.analyze_page(&pdf_path, 0) {
-                    Ok(fp) => {
-                        let msg = format!("Analysis complete: text={:.1}%, image={:.1}%, has_tables={}, text_quality={:.2}", 
-                            fp.text_coverage * 100.0, 
-                            fp.image_coverage * 100.0,
-                            fp.has_tables,
-                            fp.text_quality);
-                        self.add_debug_message(msg.clone());
-                        eprintln!("[DEBUG] {}", msg);
-                        fp
-                    }
-                    Err(e) => {
-                        eprintln!("[WARNING] Analysis failed: {}, using defaults", e);
-                        PageFingerprint::new()
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("[WARNING] Analyzer creation failed: {}, using defaults", e);
-                PageFingerprint::new()
-            }
-        };
+        // Skip ML analysis - just use pdftotext directly
         
         // Extract text using pdftotext for the right panel
         self.add_debug_message("Extracting text with pdftotext...".to_string());
@@ -1923,36 +2037,25 @@ impl UIRenderer {
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).to_string();
                 eprintln!("[DEBUG] pdftotext extracted {} characters", text.len());
-                crate::ml_extraction::ExtractionResult {
-                    text,
-                    quality_score: 0.8,
-                    method: crate::ml_extraction::ExtractionMethod::PdfToText,
-                    extraction_time_ms: 0,
-                }
+                text
             }
             _ => {
                 eprintln!("[WARNING] pdftotext failed, using fallback");
-                crate::ml_extraction::ExtractionResult {
-                    text: "Text extraction failed - pdftotext not available".to_string(),
-                    quality_score: 0.0,
-                    method: crate::ml_extraction::ExtractionMethod::PdfToText,
-                    extraction_time_ms: 0,
-                }
+                "Text extraction failed - pdftotext not available".to_string()
             }
         };
         
-        let msg = format!("Extraction complete using method: {:?}, quality: {:.2}", 
-            extraction_result.method, extraction_result.quality_score);
+        let msg = format!("Extraction complete using pdftotext");
         self.add_debug_message(msg.clone());
         eprintln!("[DEBUG] {}", msg);
         
         // Store metadata
-        self.extraction_method = Some(format!("{:?}", extraction_result.method));
-        self.extraction_quality = Some(extraction_result.quality_score);
+        self.extraction_method = Some("pdftotext".to_string());
+        self.extraction_quality = Some(0.8);
         self.extraction_timestamp = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
         
         // Just use the extracted text directly, no metadata box
-        let text_with_metadata = extraction_result.text.clone();
+        let text_with_metadata = extraction_result.clone();
         
         // Convert extracted text to grid format for display
         let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);
@@ -1969,8 +2072,8 @@ impl UIRenderer {
         self.current_pdf_image = Some(image);
         self.pdf_content = text_matrix;
         
-        // Store fingerprint info for display
-        self.dark_mode = fingerprint.text_coverage > 0.8; // Just as a flag for now
+        // Default to dark mode
+        self.dark_mode = true;
         
         Ok(())
     }
