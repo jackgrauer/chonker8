@@ -737,27 +737,12 @@ impl UIRenderer {
             ResetColor
         )?;
         
-        // Left Panel - PDF Render
-        execute!(stdout(), SetForegroundColor(Color::White))?;
-        
-        // Show PDF status
-        let pdf_status = format!(" Page {}/{} ", self.current_page, self.total_pages);
-        execute!(
-            stdout(),
-            MoveTo(2, 1),
-            SetForegroundColor(Color::DarkYellow),
-            Print(&pdf_status),
-            SetForegroundColor(Color::White)
-        )?;
-        
-        // Render PDF content or image
+        // Render PDF content or image - use FULL left panel
         if self.current_pdf_image.is_some() {
-            // Display the PDF image in the left panel ONLY
-            // split_x is the divider position, so width must be less than that
-            let pdf_panel_width = (split_x - 3).min(40);  // Hard limit to prevent spillover
-            self.render_pdf_content(1, 2, pdf_panel_width, height - 4)?;
-            
-            // Don't show debug info - it interferes with the PDF display
+            // Use entire left panel for PDF
+            let pdf_panel_width = split_x - 1;  // Full width up to divider
+            let pdf_panel_height = height - 2;  // Full height minus status bar
+            self.render_pdf_content(0, 1, pdf_panel_width, pdf_panel_height)?;
         } else {
             execute!(
                 stdout(),
@@ -1127,20 +1112,18 @@ impl UIRenderer {
                 }
             }
             
-            // Calculate scale to fit within the left panel (half the terminal width)
-            // IMPORTANT: Must constrain to left quadrant only!
-            // The width passed in should already be half the terminal
-            let panel_width_cells = width.saturating_sub(2);  // Small margin
-            let panel_height_cells = height.saturating_sub(2);
+            // Use FULL left panel space for PDF
+            let panel_width_cells = width;  // Use full width
+            let panel_height_cells = height;  // Use full height
             
             // For Kitty protocol, we specify size in terminal cells
-            // Make sure image doesn't exceed the left panel width
-            let display_width = panel_width_cells.min(35) as u32;  // Constrain to left side
-            let display_height = panel_height_cells.min(30) as u32;
+            // Use all available space in left panel
+            let display_width = panel_width_cells as u32;
+            let display_height = panel_height_cells as u32;
             
-            // Position at top-left of the panel with small margin
-            let image_x = x + 1;  // Closer to edge
-            let image_y = y + 1;
+            // Position at exact top-left corner of panel
+            let image_x = x;
+            let image_y = y;
             
             // Move cursor to position
             execute!(
@@ -1152,31 +1135,12 @@ impl UIRenderer {
             match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
                 Ok(_) => {
                 }
-                Err(e) => {
-                    eprintln!("[ERROR] KITTY FAILED: {}", e);
-                    eprintln!("[ERROR] This viewer REQUIRES Kitty-compatible terminal!");
-                    
-                    // Show error message on screen
-                    execute!(
-                        stdout(),
-                        MoveTo(x + 2, y + height/2),
-                        SetForegroundColor(Color::Red),
-                        Print("[ KITTY ERROR ]"),
-                        MoveTo(x + 2, y + height/2 + 2),
-                        Print(&format!("Error: {}", e)),
-                        SetForegroundColor(Color::White)
-                    )?;
+                Err(_e) => {
+                    // Silently fail - don't clutter the display
                 }
             }
         } else {
-            // No image - but this shouldn't happen
-            execute!(
-                stdout(),
-                MoveTo(x + 2, y + height/2),
-                SetForegroundColor(Color::Red),
-                Print("[ NO PDF IMAGE ]"),
-                SetForegroundColor(Color::White)
-            )?;
+            // No image - silently handle
         }
         
         Ok(())
