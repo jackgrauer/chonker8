@@ -727,11 +727,11 @@ impl UIRenderer {
                     
                     // Apply colors for selection and cursor
                     if is_cursor && !self.excel_grid.selecting {
-                        // Bright yellow cursor when not selecting
+                        // Dark blue cursor when not selecting (matches status bar)
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Yellow),
-                            SetForegroundColor(Color::Black),
+                            SetBackgroundColor(Color::DarkBlue),
+                            SetForegroundColor(Color::White),
                         )?;
                     } else if is_selected {
                         // Blue background for selected text
@@ -741,11 +741,11 @@ impl UIRenderer {
                             SetForegroundColor(Color::White),
                         )?;
                     } else if is_cursor {
-                        // Cyan cursor when selecting
+                        // Dark blue cursor when selecting (matches status bar)
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Cyan),
-                            SetForegroundColor(Color::Black),
+                            SetBackgroundColor(Color::DarkBlue),
+                            SetForegroundColor(Color::White),
                         )?;
                     } else {
                         execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
@@ -774,11 +774,11 @@ impl UIRenderer {
                     let is_selected = self.excel_grid.is_selected(grid_col, grid_row);
                     
                     if is_cursor && !self.excel_grid.selecting {
-                        // Bright yellow cursor when not selecting
+                        // Dark blue cursor when not selecting (matches status bar)
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Yellow),
-                            SetForegroundColor(Color::Black),
+                            SetBackgroundColor(Color::DarkBlue),
+                            SetForegroundColor(Color::White),
                         )?;
                     } else if is_selected {
                         // Blue background for selected text
@@ -788,11 +788,11 @@ impl UIRenderer {
                             SetForegroundColor(Color::White),
                         )?;
                     } else if is_cursor {
-                        // Cyan cursor when selecting
+                        // Dark blue cursor when selecting (matches status bar)
                         execute!(
                             stdout(),
-                            SetBackgroundColor(Color::Cyan),
-                            SetForegroundColor(Color::Black),
+                            SetBackgroundColor(Color::DarkBlue),
+                            SetForegroundColor(Color::White),
                         )?;
                     } else {
                         execute!(stdout(), SetForegroundColor(self.config.get_text_color()))?;
