@@ -26,7 +26,7 @@ impl IntegratedFilePicker {
     pub fn new() -> Result<Self> {
         let files = find_pdf_files()?;
         
-        let mut nucleo = Nucleo::<Arc<str>>::new(
+        let nucleo = Nucleo::<Arc<str>>::new(
             Config::DEFAULT,
             Arc::new(|| {}),
             None,

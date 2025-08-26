@@ -4,7 +4,6 @@
 // Use the library modules
 use chonker8::core::config as ui_config;
 use chonker8::display::terminal_ui as ui_renderer;
-use chonker8::ml_extraction as pdf_extraction;
 use chonker8::core::hot_reload as hot_reload_manager;
 
 use anyhow::Result;
@@ -15,7 +14,7 @@ use crossterm::{
     execute,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     io::{stdout, Write},
     path::{Path, PathBuf},
@@ -365,6 +364,11 @@ impl App {
         // Handle mouse wheel scrolling on PDF viewer screen
         let screen = self.renderer.current_screen();
         if *screen == Screen::PdfViewer {
+            // First handle Excel grid mouse events
+            self.renderer.handle_mouse_for_excel_grid(mouse);
+            self.needs_redraw = true;
+            
+            // Then handle scrolling
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
                     self.renderer.scroll_up();
@@ -374,21 +378,8 @@ impl App {
                     self.renderer.scroll_down();
                     self.needs_redraw = true;
                 }
-                // Explicitly ignore all other mouse events to prevent terminal corruption
-                MouseEventKind::Moved => {
-                    // Ignore mouse movement
-                }
-                MouseEventKind::Down(_) => {
-                    // Ignore mouse button presses
-                }
-                MouseEventKind::Up(_) => {
-                    // Ignore mouse button releases
-                }
-                MouseEventKind::Drag(_) => {
-                    // Ignore mouse drag
-                }
                 _ => {
-                    // Ignore any other mouse events
+                    // Other mouse events handled by Excel grid
                 }
             }
         }

@@ -976,10 +976,7 @@ impl UIRenderer {
     
     /// Handle keyboard input with full modifiers for advanced editing
     pub fn handle_excel_grid_input_with_modifiers(&mut self, key: crossterm::event::KeyCode, shift: bool, ctrl: bool, alt: bool) {
-        eprintln!("[UI] Handling key {:?} shift={} ctrl={} alt={}", key, shift, ctrl, alt);
         self.excel_grid.handle_key_with_modifiers(key, shift, ctrl, alt);
-        eprintln!("[UI] After key: cursor={:?} selecting={} anchor={:?}", 
-                 self.excel_grid.cursor, self.excel_grid.selecting, self.excel_grid.anchor);
     }
     
     /// Check if Excel grid is in selection mode
@@ -990,6 +987,37 @@ impl UIRenderer {
     /// Get Excel grid cursor position
     pub fn get_grid_cursor(&self) -> (usize, usize) {
         self.excel_grid.cursor
+    }
+    
+    /// Handle mouse events for Excel grid
+    pub fn handle_mouse_for_excel_grid(&mut self, event: crossterm::event::MouseEvent) {
+        // Check if mouse is in the right panel (text area)
+        let (term_width, _term_height) = match terminal::size() {
+            Ok((w, h)) => (w, h),
+            Err(_) => return,
+        };
+        
+        let split_col = term_width / 2;
+        
+        // Only handle if click is in the right panel
+        if event.column >= split_col + 2 {  // +2 for border and padding
+            let grid_col = (event.column - split_col - 2) as usize;
+            let grid_row = event.row.saturating_sub(2) as usize;  // -2 for header
+            
+            use crossterm::event::MouseEventKind;
+            match event.kind {
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                    self.excel_grid.handle_mouse_down(grid_col, grid_row);
+                }
+                MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
+                    self.excel_grid.handle_mouse_drag(grid_col, grid_row);
+                }
+                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
+                    self.excel_grid.handle_mouse_up(grid_col, grid_row);
+                }
+                _ => {}
+            }
+        }
     }
     
     /// Save the edited text to a file

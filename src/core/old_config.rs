@@ -1,6 +1,4 @@
 // Configuration constants for Chonker8
-use std::env;
-use std::path::PathBuf;
 
 // Grid dimensions
 pub const GRID_WIDTH: usize = 200;

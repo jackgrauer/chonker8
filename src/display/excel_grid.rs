@@ -82,15 +82,11 @@ impl ExcelGrid {
     pub fn from_pdftext(text: &str, width: usize) -> Self {
         let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
         let height = lines.len().max(24);
-        eprintln!("[DEBUG] Loading {} lines into Excel grid (height={})", lines.len(), height);
         
         let mut cells = Vec::with_capacity(height);
-        for (idx, line) in lines.iter().enumerate() {
+        for line in lines.iter() {
             let mut row: Vec<char> = line.chars().collect();
             row.resize(width, ' ');
-            if idx < 3 {
-                eprintln!("[DEBUG] Line {}: '{}'", idx, line.chars().take(40).collect::<String>());
-            }
             cells.push(row);
         }
         
@@ -115,7 +111,7 @@ impl ExcelGrid {
     }
     
     /// Handle keyboard input with modifiers
-    pub fn handle_key_with_modifiers(&mut self, key: KeyCode, shift: bool, ctrl: bool, alt: bool) {
+    pub fn handle_key_with_modifiers(&mut self, key: KeyCode, shift: bool, ctrl: bool, _alt: bool) {
         match key {
             // Basic cut/copy/paste only
             KeyCode::Char('c') if ctrl => {
@@ -136,13 +132,11 @@ impl ExcelGrid {
                     self.selecting = true;
                     self.anchor = self.cursor;
                     self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
-                    eprintln!("[DEBUG] Started selection at ({},{})", self.anchor.0, self.anchor.1);
                 }
                 self.cursor.1 = self.cursor.1.saturating_sub(1);
                 if shift && self.selecting {
                     let (x1, y1, x2, y2) = self.get_selection_bounds();
                     self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
-                    eprintln!("[DEBUG] Selection active: ({},{}) to ({},{}) | selecting={}", x1, y1, x2, y2, self.selecting);
                 } else if !shift {
                     self.selecting = false;
                 }
@@ -328,24 +322,64 @@ impl ExcelGrid {
     
     /// Copy selection to system clipboard
     pub fn copy_to_clipboard(&mut self) {
+        if !self.selecting {
+            self.status_message = Some("ERROR: No selection to copy".to_string());
+            return;
+        }
+        
         let text = self.copy_selection();
-        if !text.is_empty() {
-            if let Some(clipboard) = self.clipboard.clone() {
-                if let Ok(mut clip) = clipboard.lock() {
-                    if clip.set_text(&text).is_ok() {
-                        self.status_message = Some(format!("Copied {} chars", text.len()));
+        let text_preview = if text.len() > 20 {
+            format!("{}...", text.chars().take(20).collect::<String>())
+        } else {
+            text.clone()
+        };
+        
+        if let Some(clipboard) = self.clipboard.clone() {
+            if let Ok(mut clip) = clipboard.lock() {
+                match clip.set_text(&text) {
+                    Ok(_) => {
+                        self.status_message = Some(format!("COPIED: {} chars [{}]", text.len(), text_preview));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("COPY FAILED: {}", e));
                     }
                 }
+            } else {
+                self.status_message = Some("ERROR: Clipboard locked".to_string());
             }
+        } else {
+            self.status_message = Some("ERROR: No clipboard".to_string());
         }
     }
     
     /// Cut selection to clipboard
     pub fn cut_to_clipboard(&mut self) {
-        self.copy_to_clipboard();
-        if self.selecting {
-            self.clear_selection();
-            self.status_message = Some("Cut to clipboard".to_string());
+        if !self.selecting {
+            self.status_message = Some("ERROR: No selection to cut".to_string());
+            return;
+        }
+        
+        // Copy first
+        let text = self.copy_selection();
+        let chars_count = text.len();
+        
+        if let Some(clipboard) = self.clipboard.clone() {
+            if let Ok(mut clip) = clipboard.lock() {
+                match clip.set_text(&text) {
+                    Ok(_) => {
+                        // Clear after successful copy
+                        self.clear_selection();
+                        self.status_message = Some(format!("CUT: {} chars removed", chars_count));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("CUT FAILED: {}", e));
+                    }
+                }
+            } else {
+                self.status_message = Some("ERROR: Clipboard locked".to_string());
+            }
+        } else {
+            self.status_message = Some("ERROR: No clipboard".to_string());
         }
     }
     
@@ -353,11 +387,20 @@ impl ExcelGrid {
     pub fn paste_from_clipboard(&mut self) {
         if let Some(clipboard) = self.clipboard.clone() {
             if let Ok(mut clip) = clipboard.lock() {
-                if let Ok(text) = clip.get_text() {
-                    self.paste_text(&text);
-                    self.status_message = Some(format!("Pasted {} chars", text.len()));
+                match clip.get_text() {
+                    Ok(text) => {
+                        self.paste_text(&text);
+                        self.status_message = Some(format!("✓ Pasted {} chars", text.len()));
+                    }
+                    Err(_) => {
+                        self.status_message = Some("Nothing to paste".to_string());
+                    }
                 }
+            } else {
+                self.status_message = Some("Clipboard locked".to_string());
             }
+        } else {
+            self.status_message = Some("No clipboard available".to_string());
         }
     }
     
@@ -365,6 +408,38 @@ impl ExcelGrid {
     /// Get current status message
     pub fn get_status_message(&self) -> Option<&str> {
         self.status_message.as_deref()
+    }
+    
+    /// Handle mouse events for selection
+    pub fn handle_mouse_down(&mut self, col: usize, row: usize) {
+        // Start selection at clicked position
+        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
+        self.anchor = self.cursor;
+        self.selecting = false;  // Will become true on drag
+        self.status_message = Some(format!("Click at ({},{})", col, row));
+    }
+    
+    /// Handle mouse drag for selection
+    pub fn handle_mouse_drag(&mut self, col: usize, row: usize) {
+        // Update cursor position and enable selection
+        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
+        if !self.selecting && (self.cursor != self.anchor) {
+            self.selecting = true;
+        }
+        
+        if self.selecting {
+            let (x1, y1, x2, y2) = self.get_selection_bounds();
+            self.status_message = Some(format!("Mouse selecting ({},{}) to ({},{})", x1, y1, x2, y2));
+        }
+    }
+    
+    /// Handle mouse release
+    pub fn handle_mouse_up(&mut self, col: usize, row: usize) {
+        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
+        if self.selecting {
+            let (x1, y1, x2, y2) = self.get_selection_bounds();
+            self.status_message = Some(format!("Selected ({},{}) to ({},{})", x1, y1, x2, y2));
+        }
     }
     
     /// Clear status message
@@ -408,7 +483,8 @@ impl ExcelGrid {
                     line.push(self.cells[y][x]);
                 }
             }
-            result.push(line.trim_end().to_string());
+            // Don't trim if it's all spaces - might be intentional
+            result.push(line);
         }
         
         result.join("\n")
