@@ -50,8 +50,28 @@ impl SystemPdfRenderer {
             if alt_file.exists() {
                 eprintln!("[SYSTEM] Loading rendered page from {:?}", alt_file);
                 let image = image::open(&alt_file)?;
-                eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{}", image.width(), image.height());
-                return Ok(image);
+                
+                // Convert white backgrounds to pure black to match terminal
+                use image::{Rgba, ImageBuffer};
+                let rgba_image = image.to_rgba8();
+                let (width, height) = rgba_image.dimensions();
+                
+                let mut black_bg_image = ImageBuffer::new(width, height);
+                
+                for (x, y, pixel) in rgba_image.enumerate_pixels() {
+                    let Rgba([r, g, b, a]) = *pixel;
+                    
+                    // If pixel is white or near-white, make it pure black
+                    if r > 240 && g > 240 && b > 240 {
+                        black_bg_image.put_pixel(x, y, Rgba([0, 0, 0, a]));
+                    } else {
+                        black_bg_image.put_pixel(x, y, *pixel);
+                    }
+                }
+                
+                let final_image = DynamicImage::ImageRgba8(black_bg_image);
+                eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{}", final_image.width(), final_image.height());
+                return Ok(final_image);
             }
             return Err(anyhow::anyhow!("Output file not found at {:?}", output_file));
         }
@@ -59,11 +79,31 @@ impl SystemPdfRenderer {
         eprintln!("[SYSTEM] Loading rendered page from {:?}", output_file);
         let image = image::open(&output_file)?;
         
-        // Save a debug copy
-        image.save("/tmp/system_render_output.png").ok();
-        eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{} - saved to /tmp/system_render_output.png", 
-                 image.width(), image.height());
+        // Convert white backgrounds to pure black to match terminal
+        use image::{Rgba, ImageBuffer};
+        let rgba_image = image.to_rgba8();
+        let (width, height) = rgba_image.dimensions();
         
-        Ok(image)
+        let mut black_bg_image = ImageBuffer::new(width, height);
+        
+        for (x, y, pixel) in rgba_image.enumerate_pixels() {
+            let Rgba([r, g, b, a]) = *pixel;
+            
+            // If pixel is white or near-white, make it pure black
+            if r > 240 && g > 240 && b > 240 {
+                black_bg_image.put_pixel(x, y, Rgba([0, 0, 0, a]));
+            } else {
+                black_bg_image.put_pixel(x, y, *pixel);
+            }
+        }
+        
+        let final_image = DynamicImage::ImageRgba8(black_bg_image);
+        
+        // Save a debug copy
+        final_image.save("/tmp/system_render_output.png").ok();
+        eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{} - saved to /tmp/system_render_output.png", 
+                 final_image.width(), final_image.height());
+        
+        Ok(final_image)
     }
 }
