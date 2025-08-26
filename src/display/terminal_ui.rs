@@ -2,7 +2,7 @@
 use crate::core::config::UIConfig;
 use anyhow::Result;
 use crossterm::{
-    cursor::{Hide, MoveTo, Show},
+    cursor::MoveTo,
     execute,
     style::{Attribute, Attributes, Color, Print, ResetColor, SetAttributes, SetBackgroundColor, SetForegroundColor},
     terminal::{self, Clear, ClearType},
@@ -196,15 +196,14 @@ impl UIRenderer {
             execute!(
                 stdout(),
                 Clear(ClearType::All),
-                MoveTo(0, 0),
-                Hide
+                MoveTo(0, 0)
             )?;
             self.first_render = false;
         } else {
+            // Just move to home position, don't hide cursor here
             execute!(
                 stdout(),
-                MoveTo(0, 0),
-                Hide
+                MoveTo(0, 0)
             )?;
         }
         
@@ -542,12 +541,12 @@ impl UIRenderer {
         
         self.render_text_content(content_x, content_y, content_width, content_height)?;
         
-        // Show cursor if enabled
+        // Don't manage cursor visibility here - it's handled globally
+        // Just position the cursor where it should be for the text editor
         if self.config.panels.text.show_cursor {
             execute!(
                 stdout(),
-                MoveTo(content_x + self.cursor_x as u16, content_y + self.cursor_y as u16),
-                Show
+                MoveTo(content_x + self.cursor_x as u16, content_y + self.cursor_y as u16)
             )?;
         }
         

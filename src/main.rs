@@ -217,6 +217,13 @@ impl App {
                 let time_since_last_render = now.duration_since(self.last_render_time);
                 
                 if time_since_last_render >= Duration::from_millis(16) {
+                    // Show cursor when in PDF viewer (for text editing), hide otherwise
+                    if *self.renderer.current_screen() == Screen::PdfViewer {
+                        execute!(stdout(), Show)?;
+                    } else {
+                        execute!(stdout(), Hide)?;
+                    }
+                    
                     self.renderer.render()?;
                     self.needs_redraw = false;
                     self.last_render_time = now;
