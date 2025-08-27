@@ -56,21 +56,6 @@ pub struct UIRenderer {
 }
 
 impl UIRenderer {
-    // Terminal drawing helper methods
-    // Unused method - was for old UI
-    #[allow(dead_code)]
-    fn draw_header(&self, x: u16, y: u16, text: &str) -> Result<()> {
-        execute!(
-            stdout(),
-            MoveTo(x, y),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(format!(" {} ", text)),
-            ResetColor
-        )?;
-        Ok(())
-    }
-    
     fn clear_region(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         execute!(stdout(), SetBackgroundColor(Color::Black))?;
         let blank_line = " ".repeat(width as usize);
@@ -89,7 +74,7 @@ impl UIRenderer {
         // Initialize the file picker
         let file_picker = match IntegratedFilePicker::new() {
             Ok(picker) => Some(picker),
-            Err(e) => {
+            Err(_e) => {
                 None
             }
         };
@@ -377,123 +362,6 @@ impl UIRenderer {
         stdout().flush()?;
         Ok(())
     }
-    
-    
-    // Unused - only called from removed ab_comparison modules
-    #[allow(dead_code)]
-    fn render_pdf_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
-        
-        // Draw border if not "none"
-        if self.config.theme.border != "none" {
-            execute!(stdout(), SetForegroundColor(self.config.get_highlight_color()))?;
-            
-            // Top border
-            execute!(stdout(), MoveTo(x, y), Print(tl))?;
-            for i in 1..width - 1 {
-                execute!(stdout(), MoveTo(x + i, y), Print(h_line))?;
-            }
-            execute!(stdout(), MoveTo(x + width - 1, y), Print(tr))?;
-            
-            // Side borders
-            for i in 1..height - 1 {
-                execute!(stdout(), MoveTo(x, y + i), Print(v_line))?;
-                execute!(stdout(), MoveTo(x + width - 1, y + i), Print(v_line))?;
-            }
-            
-            // Bottom border
-            execute!(stdout(), MoveTo(x, y + height - 1), Print(bl))?;
-            for i in 1..width - 1 {
-                execute!(stdout(), MoveTo(x + i, y + height - 1), Print(h_line))?;
-            }
-            execute!(stdout(), MoveTo(x + width - 1, y + height - 1), Print(br))?;
-        }
-        
-        // Draw title with clean DOS-style formatting
-        let title = format!(" PAGE {}/{} ", self.current_page, self.total_pages);
-        execute!(
-            stdout(),
-            MoveTo(x + 2, y),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(&title),
-            ResetColor
-        )?;
-        
-        // Draw content
-        let content_x = if self.config.theme.border != "none" { x + 1 } else { x };
-        let content_y = if self.config.theme.border != "none" { y + 1 } else { y };
-        let content_width = if self.config.theme.border != "none" { width - 2 } else { width };
-        let content_height = if self.config.theme.border != "none" { height - 2 } else { height };
-        
-        self.render_pdf_content(content_x, content_y, content_width, content_height)?;
-        
-        Ok(())
-    }
-    
-    // Unused - only called from removed ab_comparison modules
-    #[allow(dead_code)]
-    fn render_text_panel(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
-        
-        // Draw border if not "none"
-        if self.config.theme.border != "none" {
-            execute!(stdout(), SetForegroundColor(self.config.get_highlight_color()))?;
-            
-            // Top border
-            execute!(stdout(), MoveTo(x, y), Print(tl))?;
-            for i in 1..width - 1 {
-                execute!(stdout(), MoveTo(x + i, y), Print(h_line))?;
-            }
-            execute!(stdout(), MoveTo(x + width - 1, y), Print(tr))?;
-            
-            // Side borders
-            for i in 1..height - 1 {
-                execute!(stdout(), MoveTo(x, y + i), Print(v_line))?;
-                execute!(stdout(), MoveTo(x + width - 1, y + i), Print(v_line))?;
-            }
-            
-            // Bottom border
-            execute!(stdout(), MoveTo(x, y + height - 1), Print(bl))?;
-            for i in 1..width - 1 {
-                execute!(stdout(), MoveTo(x + i, y + height - 1), Print(h_line))?;
-            }
-            execute!(stdout(), MoveTo(x + width - 1, y + height - 1), Print(br))?;
-        }
-        
-        // Draw title with extraction method indicator
-        let default_method = "pdftotext".to_string();
-        let method = self.extraction_method.as_ref().unwrap_or(&default_method);
-        let title = format!(" 📝 Extracted Text [{}] ", method);
-        execute!(
-            stdout(),
-            MoveTo(x + 2, y),
-            SetBackgroundColor(Color::Rgb { r: 30, g: 30, b: 40 }),
-            SetForegroundColor(Color::Rgb { r: 255, g: 200, b: 100 }),
-            Print(title),
-            ResetColor
-        )?;
-        
-        // Draw content
-        let content_x = if self.config.theme.border != "none" { x + 1 } else { x };
-        let content_y = if self.config.theme.border != "none" { y + 1 } else { y };
-        let content_width = if self.config.theme.border != "none" { width - 2 } else { width };
-        let content_height = if self.config.theme.border != "none" { height - 2 } else { height };
-        
-        self.render_text_content(content_x, content_y, content_width, content_height)?;
-        
-        // Don't manage cursor visibility here - it's handled globally
-        // Just position the cursor where it should be for the text editor
-        if self.config.panels.text.show_cursor {
-            execute!(
-                stdout(),
-                MoveTo(content_x + self.cursor_x as u16, content_y + self.cursor_y as u16)
-            )?;
-        }
-        
-        Ok(())
-    }
-    
     
     fn render_pdf_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // Only clear and redraw if we haven't sent the image yet or on resize
@@ -1380,8 +1248,10 @@ impl UIRenderer {
         // Extract text using pdftotext for the right panel
         self.add_debug_message("Extracting text with pdftotext...".to_string());
         
-        let mut extraction_result = match std::process::Command::new("pdftotext")
+        let mut extraction_result = match std::process::Command::new("timeout")
             .args(&[
+                "10",       // 10 second timeout for pdftotext
+                "pdftotext",
                 "-layout",  // Preserve layout
                 "-nopgbrk", // No page breaks
                 "-f", "1",  // First page
@@ -1450,7 +1320,7 @@ impl UIRenderer {
         let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);
         
         // Calculate actual available width for Excel grid based on terminal size
-        let (term_width, term_height) = terminal::size().unwrap_or((80, 24));
+        let (term_width, _term_height) = terminal::size().unwrap_or((80, 24));
         let grid_width = (term_width / 2 - 4) as usize; // Half terminal minus borders
         
         // Update Excel grid with the extracted text

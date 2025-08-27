@@ -190,38 +190,6 @@ impl KittyProtocol {
         self.active_images.clear();
         Ok(())
     }
-    
-    /// Update an existing image (replace)
-    pub fn update_image(
-        &mut self,
-        image_id: u32,
-        image: &DynamicImage,
-        width: Option<u32>,
-        height: Option<u32>,
-    ) -> Result<()> {
-        if !self.supported {
-            bail!("Kitty graphics protocol not supported");
-        }
-        
-        // Clear the old image
-        self.clear_image(image_id)?;
-        
-        // Display new image with same ID
-        let mut png_data = Vec::new();
-        let mut cursor = Cursor::new(&mut png_data);
-        image.write_to(&mut cursor, ImageFormat::Png)?;
-        
-        let (img_width, img_height) = (image.width(), image.height());
-        let display_width = width.unwrap_or(img_width);
-        let display_height = height.unwrap_or(img_height);
-        
-        // Reuse the same image ID for update
-        self.next_image_id = image_id;
-        self.transmit_image_data(&png_data, display_width, display_height)?;
-        self.next_image_id = image_id + 1;
-        
-        Ok(())
-    }
 }
 
 impl Drop for KittyProtocol {

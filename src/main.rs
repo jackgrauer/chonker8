@@ -58,6 +58,17 @@ struct App {
 }
 
 impl App {
+    fn write_debug(message: &str) {
+        // Always overwrite the same debug file (not append, for cleaner output)
+        if let Ok(mut file) = std::fs::File::create("/tmp/chonker8_debug.txt") {
+            use std::io::Write;
+            writeln!(file, "========== CHONKER8 DEBUG LOG ==========").ok();
+            writeln!(file, "Timestamp: {}", chrono::Local::now()).ok();
+            writeln!(file, "\n{}", message).ok();
+            writeln!(file, "=========================================").ok();
+        }
+    }
+    
     fn new() -> Result<Self> {
         // Load initial config
         let config = UIConfig::load()?;
@@ -377,8 +388,45 @@ impl App {
             // Try to handle file picker input
             if let Some(selected_file) = self.renderer.handle_file_picker_input(key)? {
                 // Load the selected PDF and switch to PDF viewer
+                // Try to load the PDF
                 if let Err(e) = self.load_pdf(&selected_file) {
-                    // Silenced: eprintln!("Failed to load PDF: {}", e);
+                    // Clear screen and show error in a clean way
+                    use crossterm::{execute, terminal::{Clear, ClearType}, cursor::MoveTo};
+                    use std::io::stdout;
+                    
+                    // Temporarily disable raw mode for clean output
+                    crossterm::terminal::disable_raw_mode().ok();
+                    execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0)).ok();
+                    
+                    println!("\n========== PDF LOAD ERROR ==========\n");
+                    println!("File: {}\n", selected_file);
+                    println!("Error: {}\n", e);
+                    println!("========================================");
+                    
+                    // Write debug info to the single debug file
+                    let debug_msg = format!(
+                        "PDF LOAD ERROR\nFile: {}\n\nError Details:\n{}",
+                        selected_file, e
+                    );
+                    Self::write_debug(&debug_msg);
+                    println!("\nDebug info written to: /tmp/chonker8_debug.txt");
+                    
+                    println!("\nPress Enter to return to file picker...");
+                    
+                    // Flush to ensure output appears
+                    std::io::Write::flush(&mut stdout()).ok();
+                    
+                    // Wait for Enter key
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).ok();
+                    
+                    // Re-enable raw mode and force redraw
+                    crossterm::terminal::enable_raw_mode().ok();
+                    execute!(stdout(), Clear(ClearType::All)).ok();
+                    self.needs_redraw = true;
+                    
+                    // Stay on file picker screen
+                    return Ok(());
                 }
                 self.renderer.set_screen(Screen::PdfViewer);
                 self.needs_redraw = true;

@@ -36,8 +36,11 @@ impl SystemPdfRenderer {
         // page_num is 0-based in our code but pdftoppm uses 1-based
         let page = page_num + 1;
         
-        let output = match Command::new("pdftoppm")
+        // Use timeout command to prevent hanging on large files
+        let output = match Command::new("timeout")
             .args(&[
+                "15",                      // 15 second timeout for large PDFs
+                "pdftoppm",
                 "-png",                    // PNG format
                 "-f", &page.to_string(),   // First page
                 "-l", &page.to_string(),   // Last page (same as first for single page)
@@ -56,25 +59,31 @@ impl SystemPdfRenderer {
             
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            // Check if it was a timeout
+            if output.status.code() == Some(124) {  // timeout command returns 124 on timeout
+                eprintln!("⏱️ PDF rendering timed out after 15 seconds (file may be too large)");
+                return self.create_error_image(width, height, "Timeout: PDF too large");
+            }
             // Try to provide a helpful error message
             if stderr.contains("can't open file") {
                 return self.create_error_image(width, height, "Cannot open PDF");
             } else if stderr.contains("Incorrect page") {
                 return self.create_error_image(width, height, &format!("Page {} not found", page));
             } else {
+                eprintln!("pdftoppm stderr: {}", stderr);
                 return self.create_error_image(width, height, "PDF render failed");
             }
         }
         
         // Find the generated PNG file
-        // pdftoppm adds -1.png for single page output
-        let output_file = temp_dir.path().join(format!("page-{}.png", page));
+        // pdftoppm uses 4-digit padding: page-0001.png, page-0002.png, etc.
+        let output_file = temp_dir.path().join(format!("page-{:04}.png", page));
         
         if !output_file.exists() {
-            // Try without page number suffix
-            let alt_file = temp_dir.path().join("page-1.png");
+            // Try older format without padding (for compatibility)
+            let alt_file = temp_dir.path().join(format!("page-{}.png", page));
             if alt_file.exists() {
-                // eprintln!("[SYSTEM] Loading rendered page from {:?}", alt_file);
+                // Found the file in older format (page-1.png instead of page-0001.png)
                 let image = image::open(&alt_file)?;
                 
                 // Convert white backgrounds to pure black to match terminal
@@ -102,7 +111,23 @@ impl SystemPdfRenderer {
                 // eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{}", final_image.width(), final_image.height());
                 return Ok(final_image);
             }
-            return Err(anyhow::anyhow!("Output file not found at {:?}", output_file));
+            
+            // Debug: list what files were actually created
+            let mut files_found = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(temp_dir.path()) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        files_found.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+            }
+            
+            return Err(anyhow::anyhow!(
+                "pdftoppm output file not found.\nExpected: {}\nAlternate: {}\nFiles created: {:?}", 
+                output_file.file_name().unwrap_or_default().to_string_lossy(),
+                alt_file.file_name().unwrap_or_default().to_string_lossy(),
+                files_found
+            ));
         }
         
         // eprintln!("[SYSTEM] Loading rendered page from {:?}", output_file);

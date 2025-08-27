@@ -23,12 +23,19 @@ pub fn render_pdf_page(pdf_path: &Path, page_num: usize, width: u32, height: u32
 pub fn get_pdf_page_count(pdf_path: &Path) -> Result<usize> {
     use std::process::Command;
     
-    let output = Command::new("pdfinfo")
+    // For large files, add a timeout using the timeout command
+    let output = Command::new("timeout")
+        .arg("10")  // 10 second timeout
+        .arg("pdfinfo")
         .arg(pdf_path)
         .output()?;
         
     if !output.status.success() {
-        return Err(anyhow::anyhow!("pdfinfo failed to read PDF file"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output.status.code() == Some(124) {
+            return Err(anyhow::anyhow!("pdfinfo timed out after 10s (PDF file may be too large)"));
+        }
+        return Err(anyhow::anyhow!("pdfinfo failed (exit code {:?}): {}", output.status.code(), stderr.trim()));
     }
     
     let stdout = String::from_utf8_lossy(&output.stdout);

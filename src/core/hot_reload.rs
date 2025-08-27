@@ -290,7 +290,7 @@ impl HotReloadManager {
         }
         
         // Replace current process
-        let err = cmd.exec();
+        let _err = cmd.exec();
         
         // If exec fails, exit with error
         // Silenced: eprintln!("Failed to restart app: {}", err);
