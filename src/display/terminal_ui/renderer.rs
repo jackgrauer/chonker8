@@ -1500,6 +1500,9 @@ impl UIRenderer {
         self.viewports.text_viewport.mark_dirty();
         self.viewports.status_viewport.mark_dirty();
         
+        // Clear extraction method to ensure proper detection for each PDF
+        self.extraction_method = None;
+        
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
         // eprintln!("[INFO] Left pane: lopdf-kitty rendering");
         // eprintln!("[INFO] Right pane: pdftotext extraction");
@@ -1557,6 +1560,10 @@ impl UIRenderer {
             // eprintln!("[INFO] PDF appears to be scanned, attempting OCR...");
             self.add_debug_message("No text layer detected, attempting OCR...".to_string());
             
+            // Mark viewports dirty when switching to OCR mode
+            self.viewports.text_viewport.mark_dirty();
+            self.viewports.status_viewport.mark_dirty();
+            
             // Use the already-rendered PDF image for OCR
             if let Some(ref image) = self.current_pdf_image {
                 match ocr::ocr_image(image) {
@@ -1578,6 +1585,12 @@ impl UIRenderer {
             }
         } else {
             self.extraction_method = Some("pdftotext".to_string());
+            
+            // Mark viewports dirty when switching back to pdftotext mode
+            if self.extraction_method != Some("pdftotext".to_string()) {
+                self.viewports.text_viewport.mark_dirty();
+                self.viewports.status_viewport.mark_dirty();
+            }
         }
         
         let msg = format!("Extraction complete using {}", self.extraction_method.as_ref().unwrap_or(&"unknown".to_string()));
