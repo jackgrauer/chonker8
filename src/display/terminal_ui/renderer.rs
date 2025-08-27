@@ -48,15 +48,11 @@ pub struct UIRenderer {
     debug_messages_loaded: bool,
     kitty: KittyProtocol,
     current_image_id: Option<u32>,
-    image_sent: bool,
-    first_render: bool,
-    right_panel_dirty: bool,  // Track when right panel needs full redraw
-    last_split_x: u16,  // Track if window was resized
+    image_sent: bool,  // Track if PDF image has been sent to avoid re-sending
     mouse_handler: MouseHandler,  // Mouse zone detection and handling
     pdf_zoom: f32,  // PDF panel zoom level
     text_zoom: f32,  // Text editor zoom level
     viewports: ViewportManager,  // Manage separate render regions
-    last_pdf_title: Option<String>,  // Cache the PDF title to avoid re-rendering
 }
 
 impl UIRenderer {
@@ -139,14 +135,10 @@ impl UIRenderer {
             kitty,
             current_image_id: None,
             image_sent: false,
-            first_render: true,
-            right_panel_dirty: true,
-            last_split_x: 0,
             mouse_handler: MouseHandler::new(),
             pdf_zoom: 1.0,
             text_zoom: 1.0,
             viewports: ViewportManager::new(term_width, term_height),
-            last_pdf_title: None,
         }
     }
     
@@ -245,25 +237,22 @@ impl UIRenderer {
         self.mouse_handler.update_dimensions(width, height);
         
         // Check if window was resized
-        if split_x != self.last_split_x {
+        let old_width = self.viewports.pdf_viewport.width + self.viewports.text_viewport.width + 1;
+        if old_width != width {
             self.viewports.resize(width, height);
-            self.right_panel_dirty = true;
             self.image_sent = false;  // Re-render everything on resize
-            self.first_render = true;  // Treat resize as a new render to clear artifacts
-            self.last_split_x = split_x;
         }
         
         // Hide cursor at the start to prevent flickering
         execute!(stdout(), crossterm::cursor::Hide)?;
         
-        // Only clear screen on first render
-        if self.first_render {
+        // Clear screen if any viewport needs full clear
+        if !self.image_sent {
             execute!(
                 stdout(),
                 Clear(ClearType::All),
                 MoveTo(0, 0)
             )?;
-            self.first_render = false;
             self.viewports.pdf_viewport.mark_dirty();
             self.viewports.text_viewport.mark_dirty();
             self.viewports.status_viewport.mark_dirty();
@@ -340,13 +329,12 @@ impl UIRenderer {
         }
         
         // Render text content only if viewport is dirty
-        if self.viewports.text_viewport.is_dirty() || self.right_panel_dirty {
+        if self.viewports.text_viewport.is_dirty() {
             // Render text content using viewport dimensions
             let vp = &self.viewports.text_viewport;
             self.render_text_content(vp.x, vp.y + 1, vp.width, vp.height - 1)?;
             
             self.viewports.text_viewport.mark_clean();
-            self.right_panel_dirty = false;
         }
         
         // Render status bar only if viewport is dirty
@@ -1232,7 +1220,6 @@ impl UIRenderer {
         self.grid.handle_key(key, shift);
         
         if needs_redraw {
-            self.right_panel_dirty = true;
         }
     }
     
@@ -1267,7 +1254,6 @@ impl UIRenderer {
         self.grid.handle_key_with_modifiers(key, shift, ctrl, alt);
         
         if needs_redraw {
-            self.right_panel_dirty = true;
             self.viewports.text_viewport.mark_dirty();
         }
     }
@@ -1319,8 +1305,7 @@ impl UIRenderer {
                             }
                             ZoomAction::TextZoom(level) => {
                                 self.text_zoom = level;
-                                self.right_panel_dirty = true;
-                                self.viewports.text_viewport.mark_dirty();
+                                                    self.viewports.text_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
                             _ => {}
@@ -1341,8 +1326,7 @@ impl UIRenderer {
                             ScrollAction::TextScroll(_x, y) => {
                                 // Update text scroll offset
                                 self.grid.scroll_y = y;
-                                self.right_panel_dirty = true;
-                                self.viewports.text_viewport.mark_dirty();
+                                                    self.viewports.text_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
                             _ => {}
@@ -1357,8 +1341,7 @@ impl UIRenderer {
                     match action {
                         ScrollAction::TextScroll(x, _y) => {
                             self.grid.scroll_x = x;
-                            self.right_panel_dirty = true;
-                            self.viewports.text_viewport.mark_dirty();
+                                            self.viewports.text_viewport.mark_dirty();
                             needs_redraw = true;
                         }
                         _ => {}
@@ -1412,15 +1395,15 @@ impl UIRenderer {
             match event.kind {
                 MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                     self.grid.handle_mouse_down(grid_col, grid_row);
-                    self.right_panel_dirty = true;  // Mark for redraw when selection starts
+                    self.viewports.text_viewport.mark_dirty();  // Mark for redraw when selection starts
                 }
                 MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
                     self.grid.handle_mouse_drag(grid_col, grid_row);
-                    self.right_panel_dirty = true;  // Mark for redraw during selection
+                    self.viewports.text_viewport.mark_dirty();  // Mark for redraw during selection
                 }
                 MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
                     self.grid.handle_mouse_up(grid_col, grid_row);
-                    self.right_panel_dirty = true;  // Mark for redraw when selection ends
+                    self.viewports.text_viewport.mark_dirty();  // Mark for redraw when selection ends
                 }
                 _ => {}
             }
@@ -1472,7 +1455,6 @@ impl UIRenderer {
         self.debug_messages.clear();
         self.debug_scroll_offset = 0;
         self.image_sent = false; // Reset flag for new PDF
-        self.right_panel_dirty = true; // Mark right panel for redraw with new content
         
         // Mark all viewports as dirty for new PDF
         self.viewports.pdf_viewport.mark_dirty();
