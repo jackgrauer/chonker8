@@ -22,8 +22,6 @@ atty = "0.2"
 image = "0.25"
 tempfile = "3.8"
 
-# PDF parsing (for page counting only - rendering done by pdftoppm)
-lopdf = "0.33"
 
 # Storage - Simple SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -42,17 +40,12 @@ viuer = "0.7"
 image_0_24 = { package = "image", version = "0.24" }
 base64 = "0.22"
 
+# OCR support for scanned PDFs
+rusty-tesseract = "1.1"
+
 [dev-dependencies]
 rexpect = "0.5"
 
 [[bin]]
-name = "chonker8"
-path = "src/main.rs"
-
-[[bin]]
 name = "chonker8-hot"
 path = "src/main.rs"
-
-[[bin]]
-name = "excel-grid-demo"
-path = "src/bin/excel_grid_demo.rs"

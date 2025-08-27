@@ -14,7 +14,7 @@ use std::io::{stdout, Write};
 use std::path::PathBuf;
 use image::DynamicImage;
 use crate::display::kitty_graphics::KittyProtocol;
-use crate::display::terminal_ui::ExcelGrid;
+use crate::display::terminal_ui::Grid;
 
 pub struct ABComparisonExcel {
     // PDF side
@@ -26,7 +26,7 @@ pub struct ABComparisonExcel {
     pdf_image_id: Option<u32>,
     
     // Excel grid side
-    excel_grid: ExcelGrid,
+    grid: Grid,
     
     // UI state
     focus: Focus,
@@ -36,7 +36,7 @@ pub struct ABComparisonExcel {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Focus {
     PdfView,
-    ExcelGrid,
+    Grid,
 }
 
 impl ABComparisonExcel {
@@ -51,8 +51,8 @@ impl ABComparisonExcel {
             pdf_path: None,
             kitty_protocol: kitty,
             pdf_image_id: None,
-            excel_grid: ExcelGrid::new(80, 50),
-            focus: Focus::ExcelGrid,
+            grid: Grid::new(80, 50),
+            focus: Focus::Grid,
             status_message: "Ready - Tab: Switch Focus | ^V: Block Select | ^Q: Quit".to_string(),
         }
     }
@@ -64,7 +64,7 @@ impl ABComparisonExcel {
         self.total_pages = total;
         
         // Load text into Excel grid
-        self.excel_grid = ExcelGrid::from_pdftext(text, 80);
+        self.grid = Grid::from_pdftext(text, 80);
         self.status_message = format!("Loaded page {}/{}", page, total);
     }
     
@@ -178,13 +178,13 @@ impl ABComparisonExcel {
     
     fn render_excel_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // Header
-        let header_color = if self.focus == Focus::ExcelGrid {
+        let header_color = if self.focus == Focus::Grid {
             Color::Rgb { r: 100, g: 255, b: 150 }
         } else {
             Color::Rgb { r: 80, g: 100, b: 80 }
         };
         
-        let mode_str = if self.excel_grid.selecting {
+        let mode_str = if self.grid.selecting {
             "BLOCK SELECT"
         } else {
             "EDIT"
@@ -205,7 +205,7 @@ impl ABComparisonExcel {
         let content_height = (height - 2) as usize;
         let content_width = (width - 2) as usize;
         
-        for row in 0..content_height.min(self.excel_grid.cells.len()) {
+        for row in 0..content_height.min(self.grid.cells.len()) {
             execute!(
                 stdout(),
                 MoveTo(x, y + row as u16 + 1),
@@ -227,12 +227,12 @@ impl ABComparisonExcel {
                 let text_start = 5;
                 let text_width = content_width - text_start - 1;
                 
-                for col in 0..text_width.min(self.excel_grid.width) {
-                    let is_cursor = self.excel_grid.cursor == (col, row);
-                    let is_selected = self.excel_grid.is_selected(col, row);
+                for col in 0..text_width.min(self.grid.width) {
+                    let is_cursor = self.grid.cursor == (col, row);
+                    let is_selected = self.grid.is_selected(col, row);
                     
                     // Apply colors
-                    if is_cursor && self.focus == Focus::ExcelGrid {
+                    if is_cursor && self.focus == Focus::Grid {
                         execute!(
                             stdout(),
                             SetBackgroundColor(Color::Rgb { r: 255, g: 255, b: 100 }),
@@ -247,8 +247,8 @@ impl ABComparisonExcel {
                     }
                     
                     // Print character
-                    let ch = if row < self.excel_grid.cells.len() && col < self.excel_grid.cells[row].len() {
-                        self.excel_grid.cells[row][col]
+                    let ch = if row < self.grid.cells.len() && col < self.grid.cells[row].len() {
+                        self.grid.cells[row][col]
                     } else {
                         ' '
                     };
@@ -272,7 +272,7 @@ impl ABComparisonExcel {
         }
         
         // Fill remaining rows
-        for row in content_height.min(self.excel_grid.cells.len())..content_height {
+        for row in content_height.min(self.grid.cells.len())..content_height {
             execute!(
                 stdout(),
                 MoveTo(x, y + row as u16 + 1),
@@ -297,9 +297,9 @@ impl ABComparisonExcel {
         )?;
         
         // Show cursor in Excel grid if focused
-        if self.focus == Focus::ExcelGrid {
-            let cursor_x = x + 6 + self.excel_grid.cursor.0 as u16;
-            let cursor_y = y + 1 + self.excel_grid.cursor.1 as u16;
+        if self.focus == Focus::Grid {
+            let cursor_x = x + 6 + self.grid.cursor.0 as u16;
+            let cursor_y = y + 1 + self.grid.cursor.1 as u16;
             
             if cursor_x < x + width - 1 && cursor_y < y + height - 1 {
                 execute!(stdout(), MoveTo(cursor_x, cursor_y), Show)?;
@@ -330,17 +330,17 @@ impl ABComparisonExcel {
     fn render_status_bar(&self, width: u16, height: u16) -> Result<()> {
         let focus_str = match self.focus {
             Focus::PdfView => "[PDF VIEW]",
-            Focus::ExcelGrid => "[EXCEL GRID]",
+            Focus::Grid => "[EXCEL GRID]",
         };
         
         let pos_str = format!(
             " {}:{} ",
-            self.excel_grid.cursor.1 + 1,
-            self.excel_grid.cursor.0 + 1
+            self.grid.cursor.1 + 1,
+            self.grid.cursor.0 + 1
         );
         
-        let selection_str = if self.excel_grid.selecting {
-            let (x1, y1, x2, y2) = self.excel_grid.get_selection_bounds();
+        let selection_str = if self.grid.selecting {
+            let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
             format!(" [{}×{}] ", x2 - x1 + 1, y2 - y1 + 1)
         } else {
             String::new()
@@ -371,18 +371,18 @@ impl ABComparisonExcel {
             KeyCode::Tab => {
                 // Switch focus between panels
                 self.focus = match self.focus {
-                    Focus::PdfView => Focus::ExcelGrid,
-                    Focus::ExcelGrid => Focus::PdfView,
+                    Focus::PdfView => Focus::Grid,
+                    Focus::Grid => Focus::PdfView,
                 };
                 self.status_message = format!("Focus: {:?}", self.focus);
             }
-            _ if self.focus == Focus::ExcelGrid => {
+            _ if self.focus == Focus::Grid => {
                 // Pass to Excel grid
-                self.excel_grid.handle_key(code, shift);
+                self.grid.handle_key(code, shift);
                 
                 // Update status
-                if self.excel_grid.selecting {
-                    let (x1, y1, x2, y2) = self.excel_grid.get_selection_bounds();
+                if self.grid.selecting {
+                    let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     self.status_message = format!(
                         "Selecting {}×{} block",
                         x2 - x1 + 1,
@@ -411,7 +411,7 @@ impl ABComparisonExcel {
     
     /// Get the edited text
     pub fn get_text(&self) -> String {
-        self.excel_grid.to_string()
+        self.grid.to_string()
     }
     
     /// Save the edited text

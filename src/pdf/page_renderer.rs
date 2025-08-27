@@ -28,10 +28,7 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<usize> {
         .output()?;
         
     if !output.status.success() {
-        // Fallback to lopdf if pdfinfo isn't available
-        use lopdf::Document;
-        let document = Document::load(pdf_path)?;
-        return Ok(document.get_pages().len());
+        return Err(anyhow::anyhow!("pdfinfo failed to read PDF file"));
     }
     
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -45,8 +42,6 @@ pub fn get_pdf_page_count(pdf_path: &Path) -> Result<usize> {
         }
     }
     
-    // Fallback if we couldn't parse pdfinfo output
-    use lopdf::Document;
-    let document = Document::load(pdf_path)?;
-    Ok(document.get_pages().len())
+    // If we couldn't parse the output, assume 1 page
+    Ok(1)
 }

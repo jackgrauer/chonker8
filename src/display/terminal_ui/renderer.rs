@@ -11,715 +11,12 @@ use std::io::{stdout, Write};
 use std::path::PathBuf;
 use image::DynamicImage;
 use crate::display::file_browser::IntegratedFilePicker;
-use crate::pdf::{page_renderer as pdf_renderer, extract_text as content_extractor};
+use crate::pdf::page_renderer as pdf_renderer;
 use crate::display::kitty_graphics::KittyProtocol;
-use crossterm::event::KeyCode;
-use std::cmp::{min, max};
-use arboard::Clipboard;
-use std::sync::{Arc, Mutex};
-use nucleo::{Nucleo, Config as NucleoConfig};
+use crate::display::mouse_zones::{MouseHandler, MouseZone, PanelFocus, ScrollAction, ZoomAction};
+// Use the Grid module from the same module
+use super::grid::Grid;
 
-// Excel-style grid editor for PDF text extraction - migrated from excel_grid.rs
-// Provides spreadsheet-like block selection and editing
-pub struct ExcelGrid {
-    pub cells: Vec<Vec<char>>,
-    pub cursor: (usize, usize),  // (col, row)
-    pub selecting: bool,
-    pub anchor: (usize, usize),   // selection start point
-    pub width: usize,
-    pub height: usize,
-    clipboard: Option<Arc<Mutex<Clipboard>>>,
-    status_message: Option<String>,
-    // Search functionality
-    search_query: String,
-    search_results: Vec<(usize, usize)>,  // (col, row) positions
-    search_current_index: usize,
-    searching: bool,
-}
-
-impl Clone for ExcelGrid {
-    fn clone(&self) -> Self {
-        // Create a new clipboard instance for the clone
-        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
-        Self {
-            cells: self.cells.clone(),
-            cursor: self.cursor,
-            selecting: self.selecting,
-            anchor: self.anchor,
-            width: self.width,
-            height: self.height,
-            clipboard,
-            status_message: self.status_message.clone(),
-            search_query: self.search_query.clone(),
-            search_results: self.search_results.clone(),
-            search_current_index: self.search_current_index,
-            searching: self.searching,
-        }
-    }
-}
-
-impl std::fmt::Debug for ExcelGrid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExcelGrid")
-            .field("cursor", &self.cursor)
-            .field("selecting", &self.selecting)
-            .field("anchor", &self.anchor)
-            .field("width", &self.width)
-            .field("height", &self.height)
-            .field("status_message", &self.status_message)
-            .finish()
-    }
-}
-
-impl Default for ExcelGrid {
-    fn default() -> Self {
-        Self::new(80, 24)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SelectionMode {
-    Character,
-    Word,
-    Line,
-    Block,
-    All,
-}
-
-impl ExcelGrid {
-    pub fn new(width: usize, height: usize) -> Self {
-        let cells = vec![vec![' '; width]; height];
-        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
-        Self {
-            cells,
-            cursor: (0, 0),
-            selecting: false,
-            anchor: (0, 0),
-            width,
-            height,
-            clipboard,
-            status_message: None,
-            search_query: String::new(),
-            search_results: Vec::new(),
-            search_current_index: 0,
-            searching: false,
-        }
-    }
-    
-    /// Create grid from pdftotext output
-    pub fn from_pdftext(text: &str, width: usize) -> Self {
-        let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
-        let height = lines.len().max(24);
-        
-        let mut cells = Vec::with_capacity(height);
-        for line in lines.iter() {
-            let mut row: Vec<char> = line.chars().collect();
-            row.resize(width, ' ');
-            cells.push(row);
-        }
-        
-        // Ensure minimum height
-        while cells.len() < height {
-            cells.push(vec![' '; width]);
-        }
-        
-        let grid_height = cells.len();
-        let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
-        
-        Self {
-            cells,
-            cursor: (0, 0),
-            selecting: false,
-            anchor: (0, 0),
-            width,
-            height: grid_height,
-            clipboard,
-            status_message: None,
-            search_query: String::new(),
-            search_results: Vec::new(),
-            search_current_index: 0,
-            searching: false,
-        }
-    }
-    
-    /// Handle keyboard input with modifiers
-    pub fn handle_key_with_modifiers(&mut self, key: KeyCode, shift: bool, ctrl: bool, _alt: bool) {
-        // Handle search mode input first
-        if self.searching {
-            match key {
-                KeyCode::Esc => {
-                    self.exit_search();
-                }
-                KeyCode::Enter => {
-                    if shift {
-                        self.find_previous();
-                    } else {
-                        self.find_next();
-                    }
-                }
-                KeyCode::Backspace => {
-                    self.search_query.pop();
-                    self.perform_search();
-                }
-                KeyCode::Char('n') if ctrl && shift => {
-                    self.find_previous();
-                }
-                KeyCode::Char('n') if ctrl => {
-                    self.find_next();
-                }
-                KeyCode::Char(c) if !ctrl => {
-                    self.search_query.push(c);
-                    self.perform_search();
-                }
-                _ => {}
-            }
-            return;
-        }
-        
-        match key {
-            // Search functionality
-            KeyCode::Char('f') if ctrl => {
-                self.start_search();
-            }
-            
-            KeyCode::F(3) => {
-                if !self.searching {
-                    self.start_search();
-                } else {
-                    self.find_next();
-                }
-            }
-            
-            KeyCode::Char('n') if ctrl => {
-                self.find_next();
-            }
-            
-            // Basic cut/copy/paste only
-            KeyCode::Char('c') if ctrl => {
-                self.copy_to_clipboard();
-            }
-            
-            KeyCode::Char('x') if ctrl => {
-                self.cut_to_clipboard();
-            }
-            
-            KeyCode::Char('v') if ctrl => {
-                self.paste_from_clipboard();
-            }
-            
-            // Simple arrow key movement
-            KeyCode::Up => {
-                if shift && !self.selecting {
-                    self.selecting = true;
-                    self.anchor = self.cursor;
-                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
-                }
-                self.cursor.1 = self.cursor.1.saturating_sub(1);
-                if shift && self.selecting {
-                    let (x1, y1, x2, y2) = self.get_selection_bounds();
-                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
-                } else if !shift {
-                    self.selecting = false;
-                }
-            }
-            KeyCode::Down => {
-                if shift && !self.selecting {
-                    self.selecting = true;
-                    self.anchor = self.cursor;
-                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
-                }
-                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
-                if shift && self.selecting {
-                    let (x1, y1, x2, y2) = self.get_selection_bounds();
-                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
-                } else if !shift {
-                    self.selecting = false;
-                }
-            }
-            KeyCode::Left => {
-                if shift && !self.selecting {
-                    self.selecting = true;
-                    self.anchor = self.cursor;
-                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
-                }
-                self.cursor.0 = self.cursor.0.saturating_sub(1);
-                if shift && self.selecting {
-                    let (x1, y1, x2, y2) = self.get_selection_bounds();
-                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
-                } else if !shift {
-                    self.selecting = false;
-                }
-            }
-            KeyCode::Right => {
-                if shift && !self.selecting {
-                    self.selecting = true;
-                    self.anchor = self.cursor;
-                    self.status_message = Some(format!("Selection started at ({},{})", self.anchor.0, self.anchor.1));
-                }
-                self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
-                if shift && self.selecting {
-                    let (x1, y1, x2, y2) = self.get_selection_bounds();
-                    self.status_message = Some(format!("Selecting ({},{}) to ({},{})", x1, y1, x2, y2));
-                } else if !shift {
-                    self.selecting = false;
-                }
-            }
-            
-            // Escape cancels selection
-            KeyCode::Esc => {
-                self.selecting = false;
-                self.status_message = Some("Selection cancelled".to_string());
-            }
-            
-            // Delete/Backspace
-            KeyCode::Delete => {
-                if self.selecting {
-                    self.clear_selection();
-                } else {
-                    self.cells[self.cursor.1][self.cursor.0] = ' ';
-                }
-            }
-            KeyCode::Backspace => {
-                if self.selecting {
-                    self.clear_selection();
-                } else if self.cursor.0 > 0 {
-                    self.cursor.0 -= 1;
-                    self.cells[self.cursor.1][self.cursor.0] = ' ';
-                }
-            }
-            
-            // Character input - handle both ctrl shortcuts and regular typing
-            KeyCode::Char(c) if !ctrl => {
-                // Regular typing (not a ctrl shortcut)
-                if self.selecting {
-                    // Replace all characters in selected block
-                    self.for_each_in_selection(|cell| *cell = c);
-                    self.selecting = false;
-                    self.status_message = Some(format!("Replaced selection with '{}'", c));
-                } else {
-                    // Type at cursor
-                    if self.cursor.1 < self.cells.len() && self.cursor.0 < self.cells[self.cursor.1].len() {
-                        self.cells[self.cursor.1][self.cursor.0] = c;
-                        // Move cursor right after typing
-                        self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
-                    }
-                }
-            }
-            
-            // Home/End for line navigation
-            KeyCode::Home => {
-                self.cursor.0 = 0;
-            }
-            KeyCode::End => {
-                // Find last non-space character in current line
-                if self.cursor.1 < self.cells.len() {
-                    let line = &self.cells[self.cursor.1];
-                    self.cursor.0 = line.iter()
-                        .rposition(|&c| c != ' ')
-                        .map(|i| (i + 1).min(self.width - 1))
-                        .unwrap_or(0);
-                }
-            }
-            
-            // Enter key - move to next line
-            KeyCode::Enter => {
-                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
-                self.cursor.0 = 0;
-            }
-            
-            // Page Up/Down
-            KeyCode::PageUp => {
-                self.cursor.1 = self.cursor.1.saturating_sub(10);
-            }
-            KeyCode::PageDown => {
-                self.cursor.1 = (self.cursor.1 + 10).min(self.height - 1);
-            }
-            
-            _ => {}
-        }
-    }
-    
-    /// Apply a function to each cell in the current selection
-    fn for_each_in_selection<F>(&mut self, f: F) 
-    where F: Fn(&mut char)
-    {
-        let (x1, y1, x2, y2) = self.get_selection_bounds();
-        for y in y1..=y2.min(self.cells.len().saturating_sub(1)) {
-            for x in x1..=x2.min(self.cells.get(y).map(|row| row.len().saturating_sub(1)).unwrap_or(0)) {
-                f(&mut self.cells[y][x]);
-            }
-        }
-    }
-    
-    /// Clear the selected block
-    pub fn clear_selection(&mut self) {
-        self.for_each_in_selection(|c| *c = ' ');
-        self.selecting = false;
-    }
-    
-    /// Get normalized selection bounds (x1, y1, x2, y2)
-    pub fn get_selection_bounds(&self) -> (usize, usize, usize, usize) {
-        (
-            min(self.anchor.0, self.cursor.0),
-            min(self.anchor.1, self.cursor.1),
-            max(self.anchor.0, self.cursor.0),
-            max(self.anchor.1, self.cursor.1),
-        )
-    }
-    
-    /// Check if a position is within the selection
-    pub fn is_selected(&self, x: usize, y: usize) -> bool {
-        if !self.selecting {
-            return false;
-        }
-        let (x1, y1, x2, y2) = self.get_selection_bounds();
-        let selected = x >= x1 && x <= x2 && y >= y1 && y <= y2;
-        selected
-    }
-    
-    /// Get the content as a string
-    pub fn to_string(&self) -> String {
-        self.cells
-            .iter()
-            .map(|row| row.iter().collect::<String>().trim_end().to_string())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-    
-    /// Handle keyboard input (backward compatibility wrapper)
-    pub fn handle_key(&mut self, key: KeyCode, shift_held: bool) {
-        self.handle_key_with_modifiers(key, shift_held, false, false);
-    }
-    
-    /// Helper to execute clipboard operations with proper error handling
-    fn with_clipboard<F, T>(&mut self, operation: &str, f: F) -> Option<T>
-    where 
-        F: FnOnce(&mut Clipboard) -> Result<T, Box<dyn std::error::Error>>
-    {
-        match &self.clipboard {
-            Some(clipboard) => match clipboard.lock() {
-                Ok(mut clip) => match f(&mut *clip) {
-                    Ok(result) => Some(result),
-                    Err(e) => {
-                        self.status_message = Some(format!("{} FAILED: {}", operation, e));
-                        None
-                    }
-                },
-                Err(_) => {
-                    self.status_message = Some("ERROR: Clipboard locked".to_string());
-                    None
-                }
-            },
-            None => {
-                self.status_message = Some("ERROR: No clipboard".to_string());
-                None
-            }
-        }
-    }
-    
-    /// Copy selection to system clipboard
-    pub fn copy_to_clipboard(&mut self) {
-        if !self.selecting {
-            self.status_message = Some("ERROR: No selection to copy".to_string());
-            return;
-        }
-        
-        let text = self.copy_selection();
-        let text_len = text.len();
-        
-        self.with_clipboard("COPY", |clip| {
-            clip.set_text(&text)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-        }).map(|_| {
-            self.status_message = Some(format!("COPIED {} chars", text_len));
-        });
-    }
-    
-    /// Cut selection to clipboard
-    pub fn cut_to_clipboard(&mut self) {
-        if !self.selecting {
-            self.status_message = Some("ERROR: No selection to cut".to_string());
-            return;
-        }
-        
-        let text = self.copy_selection();
-        let chars_count = text.len();
-        
-        self.with_clipboard("CUT", |clip| {
-            clip.set_text(&text)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-        }).map(|_| {
-            self.clear_selection();
-            self.status_message = Some(format!("CUT: {} chars removed", chars_count));
-        });
-    }
-    
-    /// Paste from system clipboard
-    pub fn paste_from_clipboard(&mut self) {
-        self.with_clipboard("PASTE", |clip| {
-            clip.get_text()
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-        }).map(|text| {
-            let text_len = text.len();
-            self.paste_text(&text);
-            self.status_message = Some(format!("PASTED {} chars", text_len));
-        }).or_else(|| {
-            self.status_message = Some("CLIPBOARD EMPTY".to_string());
-            None
-        });
-    }
-    
-    /// Get current status message
-    pub fn get_status_message(&self) -> Option<&str> {
-        self.status_message.as_deref()
-    }
-    
-    /// Handle mouse events for selection
-    pub fn handle_mouse_down(&mut self, col: usize, row: usize) {
-        // Start selection at clicked position
-        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
-        self.anchor = self.cursor;
-        self.selecting = false;  // Will become true on drag
-        self.status_message = Some(format!("POS: {},{}", col + 1, row + 1));
-    }
-    
-    /// Handle mouse drag for selection
-    pub fn handle_mouse_drag(&mut self, col: usize, row: usize) {
-        // Update cursor position and enable selection
-        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
-        if !self.selecting && (self.cursor != self.anchor) {
-            self.selecting = true;
-        }
-        
-        if self.selecting {
-            let (x1, y1, x2, y2) = self.get_selection_bounds();
-            self.status_message = Some(format!("SELECTING: {},{} to {},{}", x1 + 1, y1 + 1, x2 + 1, y2 + 1));
-        }
-    }
-    
-    /// Handle mouse release
-    pub fn handle_mouse_up(&mut self, col: usize, row: usize) {
-        self.cursor = (col.min(self.width - 1), row.min(self.height - 1));
-        if self.selecting {
-            let (x1, y1, x2, y2) = self.get_selection_bounds();
-            self.status_message = Some(format!("SELECTED: {},{} to {},{}", x1 + 1, y1 + 1, x2 + 1, y2 + 1));
-        }
-    }
-    
-    /// Clear status message
-    pub fn clear_status_message(&mut self) {
-        self.status_message = None;
-    }
-    
-    // Search functionality methods
-    
-    /// Start search mode
-    pub fn start_search(&mut self) {
-        self.searching = true;
-        self.search_query.clear();
-        self.search_results.clear();
-        self.search_current_index = 0;
-        self.status_message = Some("🔍 SEARCH: Type to search, Enter/Shift+Enter to navigate, ESC to exit".to_string());
-    }
-    
-    /// Exit search mode
-    pub fn exit_search(&mut self) {
-        self.searching = false;
-        self.search_results.clear();
-        self.status_message = Some("Search cancelled".to_string());
-    }
-    
-    /// Perform search and find all matches (with fuzzy search support)
-    pub fn perform_search(&mut self) {
-        if self.search_query.is_empty() {
-            self.search_results.clear();
-            self.status_message = Some("SEARCH: Type to search".to_string());
-            return;
-        }
-        
-        self.search_results.clear();
-        
-        // Try exact match first for better performance on simple searches
-        let query_lower = self.search_query.to_lowercase();
-        let mut found_exact = false;
-        
-        // Search through all cells for exact matches
-        for (row_idx, row) in self.cells.iter().enumerate() {
-            let row_text: String = row.iter().collect::<String>().to_lowercase();
-            
-            // Find all occurrences in this row
-            let mut start = 0;
-            while let Some(pos) = row_text[start..].find(&query_lower) {
-                let actual_pos = start + pos;
-                self.search_results.push((actual_pos, row_idx));
-                found_exact = true;
-                start = actual_pos + 1;
-            }
-        }
-        
-        // If no exact matches, try fuzzy search with Nucleo
-        if !found_exact && self.search_query.len() >= 2 {
-            // Create a temporary Nucleo matcher for fuzzy search
-            let mut nucleo = Nucleo::<(usize, usize, String)>::new(
-                NucleoConfig::DEFAULT,
-                Arc::new(|| {}),
-                None,
-                1,
-            );
-            
-            let injector = nucleo.injector();
-            
-            // Add all text positions as searchable items
-            for (row_idx, row) in self.cells.iter().enumerate() {
-                let row_text: String = row.iter().collect();
-                // Break row into words for better fuzzy matching
-                for word in row_text.split_whitespace() {
-                    if let Some(word_start) = row_text.find(word) {
-                        injector.push((word_start, row_idx, word.to_string()), |_, cols| {
-                            cols[0] = word.clone().into();
-                        });
-                    }
-                }
-            }
-            
-            // Run the fuzzy search
-            nucleo.tick(10);
-            nucleo.pattern.reparse(
-                0,
-                &self.search_query,  // Pass the query string directly
-                nucleo::pattern::CaseMatching::Ignore,
-                nucleo::pattern::Normalization::Smart,
-                false,
-            );
-            nucleo.tick(10);
-            
-            // Get fuzzy matches
-            let snapshot = nucleo.snapshot();
-            for item in snapshot.matched_items(..).take(20) {
-                let (col, row, _) = &item.data;
-                self.search_results.push((*col, *row));
-            }
-        }
-        
-        if !self.search_results.is_empty() {
-            self.search_current_index = 0;
-            let (col, row) = self.search_results[0];
-            self.cursor = (col, row);
-            let match_type = if found_exact { "exact" } else { "fuzzy" };
-            self.status_message = Some(format!("SEARCH: '{}' - {} {} matches (Enter for next)", 
-                                               self.search_query,
-                                               self.search_results.len(),
-                                               match_type));
-        } else {
-            self.status_message = Some(format!("SEARCH: '{}' - No matches found", self.search_query));
-        }
-    }
-    
-    /// Find next search result
-    pub fn find_next(&mut self) {
-        if self.search_results.is_empty() {
-            self.status_message = Some("No search results".to_string());
-            return;
-        }
-        
-        self.search_current_index = (self.search_current_index + 1) % self.search_results.len();
-        let (col, row) = self.search_results[self.search_current_index];
-        self.cursor = (col, row);
-        self.status_message = Some(format!("SEARCH: Match {}/{}", 
-                                           self.search_current_index + 1,
-                                           self.search_results.len()));
-    }
-    
-    /// Find previous search result
-    pub fn find_previous(&mut self) {
-        if self.search_results.is_empty() {
-            self.status_message = Some("No search results".to_string());
-            return;
-        }
-        
-        if self.search_current_index == 0 {
-            self.search_current_index = self.search_results.len() - 1;
-        } else {
-            self.search_current_index -= 1;
-        }
-        
-        let (col, row) = self.search_results[self.search_current_index];
-        self.cursor = (col, row);
-        self.status_message = Some(format!("SEARCH: Match {}/{}", 
-                                           self.search_current_index + 1,
-                                           self.search_results.len()));
-    }
-    
-    /// Check if a position matches current search
-    pub fn is_search_match(&self, col: usize, row: usize) -> bool {
-        if !self.searching || self.search_query.is_empty() {
-            return false;
-        }
-        
-        // Check if this position is part of any search result
-        for &(result_col, result_row) in &self.search_results {
-            if result_row == row && 
-               col >= result_col && 
-               col < result_col + self.search_query.len() {
-                return true;
-            }
-        }
-        false
-    }
-    
-    /// Insert text at cursor position
-    pub fn insert_text(&mut self, text: &str) {
-        for ch in text.chars() {
-            if ch == '\n' {
-                // Move to next line
-                self.cursor.1 = (self.cursor.1 + 1).min(self.height - 1);
-                self.cursor.0 = 0;
-            } else if ch == '\t' {
-                // Tab moves 4 spaces
-                self.cursor.0 = (self.cursor.0 + 4).min(self.width - 1);
-            } else {
-                // Insert character
-                if self.cursor.1 < self.cells.len() && self.cursor.0 < self.cells[self.cursor.1].len() {
-                    self.cells[self.cursor.1][self.cursor.0] = ch;
-                    self.cursor.0 = (self.cursor.0 + 1).min(self.width - 1);
-                }
-            }
-        }
-    }
-    
-    /// Copy selected text to string
-    pub fn copy_selection(&self) -> String {
-        if !self.selecting {
-            return String::new();
-        }
-        
-        let (x1, y1, x2, y2) = self.get_selection_bounds();
-        let mut result = Vec::new();
-        
-        for y in y1..=y2 {
-            let mut line = String::new();
-            for x in x1..=x2 {
-                if y < self.cells.len() && x < self.cells[y].len() {
-                    line.push(self.cells[y][x]);
-                }
-            }
-            // Don't trim if it's all spaces - might be intentional
-            result.push(line);
-        }
-        
-        result.join("\n")
-    }
-    
-    /// Replace selection with text
-    pub fn paste_text(&mut self, text: &str) {
-        if self.selecting {
-            self.clear_selection();
-        }
-        self.insert_text(text);
-    }
-}
-
-// End of ExcelGrid implementation
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -730,7 +27,7 @@ pub enum Screen {
 pub struct UIRenderer {
     config: UIConfig,
     pdf_content: Vec<Vec<char>>,
-    excel_grid: ExcelGrid,  // Excel-style editable grid
+    grid: Grid,  // Excel-style editable grid
     current_page: usize,
     total_pages: usize,
     scroll_offset: usize,
@@ -754,6 +51,9 @@ pub struct UIRenderer {
     first_render: bool,
     right_panel_dirty: bool,  // Track when right panel needs full redraw
     last_split_x: u16,  // Track if window was resized
+    mouse_handler: MouseHandler,  // Mouse zone detection and handling
+    pdf_zoom: f32,  // PDF panel zoom level
+    text_zoom: f32,  // Text editor zoom level
 }
 
 impl UIRenderer {
@@ -789,7 +89,7 @@ impl UIRenderer {
         let file_picker = match IntegratedFilePicker::new() {
             Ok(picker) => Some(picker),
             Err(e) => {
-                eprintln!("Warning: Failed to initialize file picker: {}", e);
+                // Silenced: eprintln!("Warning: Failed to initialize file picker: {}", e);
                 None
             }
         };
@@ -798,14 +98,14 @@ impl UIRenderer {
         
         // FORCE ENABLE KITTY FOR TESTING
         kitty.force_enable();
-        eprintln!("[KITTY] *** FORCE-ENABLED KITTY PROTOCOL FOR TESTING ***");
+        // eprintln!("[KITTY] *** FORCE-ENABLED KITTY PROTOCOL FOR TESTING ***");
         
         // Kitty is MANDATORY for this viewer
         if kitty.is_supported() {
-            eprintln!("[DEBUG] Kitty graphics protocol ACTIVE");
+            // eprintln!("[DEBUG] Kitty graphics protocol ACTIVE");
         } else {
-            eprintln!("[WARNING] Kitty not detected - PDF images require Kitty terminal");
-            eprintln!("[WARNING] Run with: kitty ./target/release/chonker8-hot [pdf]");
+            // Silenced: eprintln!("[WARNING] Kitty not detected - PDF images require Kitty terminal");
+            // Silenced: eprintln!("[WARNING] Run with: kitty ./target/release/chonker8-hot [pdf]");
         }
         
         // Calculate actual available width for Excel grid based on terminal size
@@ -815,7 +115,7 @@ impl UIRenderer {
         Self {
             config,
             pdf_content: vec![vec![' '; 80]; 24], // Default empty content
-            excel_grid: ExcelGrid::new(grid_width.max(40), 50),  // Initialize Excel grid with actual width
+            grid: Grid::new(grid_width.max(40), 50),  // Initialize Excel grid with actual width
             current_page: 1,
             total_pages: 1,
             scroll_offset: 0,
@@ -839,6 +139,9 @@ impl UIRenderer {
             first_render: true,
             right_panel_dirty: true,
             last_split_x: 0,
+            mouse_handler: MouseHandler::new(),
+            pdf_zoom: 1.0,
+            text_zoom: 1.0,
         }
     }
     
@@ -932,6 +235,9 @@ impl UIRenderer {
         let (width, height) = terminal::size()?;
         let split_x = width / 2;
         
+        // Update mouse handler dimensions
+        self.mouse_handler.update_dimensions(width, height);
+        
         // Check if window was resized
         if split_x != self.last_split_x {
             self.right_panel_dirty = true;
@@ -943,20 +249,15 @@ impl UIRenderer {
         // Hide cursor at the start to prevent flickering
         execute!(stdout(), crossterm::cursor::Hide)?;
         
-        // Only clear screen on first render to prevent flicker
-        if self.first_render {
+        // Only clear screen on first render or when image needs to be redrawn
+        // This prevents flickering while still clearing any text leakage
+        if self.first_render || !self.image_sent {
             execute!(
                 stdout(),
                 Clear(ClearType::All),
                 MoveTo(0, 0)
             )?;
             self.first_render = false;
-        } else {
-            // Just move to home position
-            execute!(
-                stdout(),
-                MoveTo(0, 0)
-            )?;
         }
         
         // Draw a simple vertical split only on first render or if image not sent yet
@@ -976,9 +277,35 @@ impl UIRenderer {
                 Clear(ClearType::CurrentLine)
             )?;
             
-            // Panel titles
-            self.draw_header(2, 0, "PDF DOCUMENT")?;
-            self.draw_header(split_x + 2, 0, "TEXT EDITOR")?;
+            // Panel titles with active indication
+            let pdf_color = self.mouse_handler.get_panel_highlight_color(PanelFocus::Pdf);
+            let text_color = self.mouse_handler.get_panel_highlight_color(PanelFocus::Text);
+            
+            // PDF panel header
+            execute!(
+                stdout(),
+                MoveTo(2, 0),
+                SetForegroundColor(pdf_color),
+                Print(if self.mouse_handler.active_panel == PanelFocus::Pdf { 
+                    "● PDF DOCUMENT" 
+                } else { 
+                    "○ PDF DOCUMENT" 
+                }),
+                ResetColor
+            )?;
+            
+            // Text editor header
+            execute!(
+                stdout(),
+                MoveTo(split_x + 2, 0),
+                SetForegroundColor(text_color),
+                Print(if self.mouse_handler.active_panel == PanelFocus::Text { 
+                    "● TEXT EDITOR" 
+                } else { 
+                    "○ TEXT EDITOR" 
+                }),
+                ResetColor
+            )?;
         }
         
         // Render PDF content or image - use FULL left panel
@@ -1016,6 +343,18 @@ impl UIRenderer {
             }
         }
         
+        // Only clear and redraw the text panel if it's dirty
+        if self.right_panel_dirty {
+            // Clear just the right panel area to prevent text artifacts
+            for y in 1..height - 1 {
+                execute!(
+                    stdout(),
+                    MoveTo(split_x + 1, y),
+                    Clear(ClearType::UntilNewLine)
+                )?;
+            }
+        }
+        
         // Always render text content - it will handle incremental updates
         self.render_text_content(split_x + 1, 2, width - split_x, height - 4)?;
         
@@ -1032,7 +371,7 @@ impl UIRenderer {
             ).unwrap_or_else(|| "PDF - TEST Screen".to_string()),
             
             // Excel grid status or shortcuts
-            self.excel_grid.get_status_message()
+            self.grid.get_status_message()
                 .map(|msg| msg.to_string())
                 .unwrap_or_else(|| "F1:Help Ctrl-F:Find Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste".to_string()),
             
@@ -1056,20 +395,13 @@ impl UIRenderer {
         
         // Position cursor in the right panel at the Excel grid cursor position
         // Account for line numbers (5 chars) if enabled
-        let line_number_offset = if self.config.panels.text.line_numbers { 5 } else { 0 };
-        let cursor_x = split_x + 1 + line_number_offset + self.excel_grid.cursor.0 as u16;
-        let cursor_y = 2 + self.excel_grid.cursor.1 as u16;
+        // (Cursor position calculation removed - we use colored backgrounds instead)
         
         // Final cleanup: ALWAYS clear columns 0 and 1 to prevent any artifacts
         self.clear_region(0, 0, 2, height)?;
         
-        // Show cursor at the correct position in the text editor AFTER clearing
-        // This ensures cursor is only visible in the right panel
-        execute!(
-            stdout(),
-            MoveTo(cursor_x, cursor_y),
-            crossterm::cursor::Show
-        )?;
+        // Keep cursor hidden - we use colored backgrounds to show cursor position
+        // This prevents the double cursor visual issue
         
         stdout().flush()?;
         Ok(())
@@ -1263,7 +595,9 @@ impl UIRenderer {
         }
         
         // Draw title with extraction method indicator
-        let title = " 📝 Extracted Text [pdftotext] ";
+        let default_method = "pdftotext".to_string();
+        let method = self.extraction_method.as_ref().unwrap_or(&default_method);
+        let title = format!(" 📝 Extracted Text [{}] ", method);
         execute!(
             stdout(),
             MoveTo(x + 2, y),
@@ -1310,11 +644,29 @@ impl UIRenderer {
             execute!(stdout(), ResetColor)?;
         }
         
-        // ALWAYS use Kitty protocol - NO FALLBACK
+        // Only attempt Kitty protocol if supported
         if let Some(ref image) = self.current_pdf_image {
-            // Only send the image if we haven't sent it yet
+            // Check if Kitty protocol is actually supported
+            let kitty_supported = std::env::var("KITTY_WINDOW_ID").is_ok() || 
+                                 std::env::var("TERM").unwrap_or_default().contains("kitty");
+            
+            if !kitty_supported {
+                // Fallback: Show message instead of broken escape sequences
+                if !self.image_sent {
+                    self.image_sent = true;
+                    execute!(
+                        stdout(),
+                        MoveTo(x + 5, y + height/2),
+                        SetForegroundColor(Color::DarkGrey),
+                        Print("[PDF rendering requires Kitty terminal]"),
+                        ResetColor
+                    )?;
+                }
+                return Ok(());
+            }
+            
+            // Only send the image if we haven't sent it yet or if screen was cleared
             if !self.image_sent {
-                self.image_sent = true;
             
             // Use inline Kitty implementation with correct protocol
             struct KittyImage;
@@ -1393,7 +745,7 @@ impl UIRenderer {
                 }
             }
             
-            // Calculate aspect-ratio preserved dimensions - MAXIMIZE size
+            // Calculate aspect-ratio preserved dimensions with ZOOM support
             let panel_width_cells = width as u32;
             let panel_height_cells = height as u32;
             
@@ -1402,11 +754,14 @@ impl UIRenderer {
             let img_height = image.height() as f32;
             let aspect_ratio = img_width / img_height;
             
+            // Apply zoom factor to dimensions
+            let zoom_factor = self.pdf_zoom;
+            
             // Calculate the best fit while preserving aspect ratio
             // Always use the full available dimension and scale the other accordingly
             let panel_aspect = panel_width_cells as f32 / panel_height_cells as f32;
             
-            let (display_width, display_height) = if panel_aspect > aspect_ratio {
+            let (base_width, base_height) = if panel_aspect > aspect_ratio {
                 // Panel is wider than image - scale to full height
                 let display_height = panel_height_cells;
                 let display_width = (display_height as f32 * aspect_ratio).round() as u32;
@@ -1428,13 +783,21 @@ impl UIRenderer {
                 }
             };
             
-            // Center the image in the panel (will be 0 offset on the maximized dimension)
-            let x_offset = panel_width_cells.saturating_sub(display_width) / 2;
-            let y_offset = panel_height_cells.saturating_sub(display_height) / 2;
+            // Apply zoom to the dimensions
+            let display_width = ((base_width as f32 * zoom_factor) as u32).max(10).min(panel_width_cells * 3);
+            let display_height = ((base_height as f32 * zoom_factor) as u32).max(10).min(panel_height_cells * 3);
             
-            // Position at centered location within panel
-            let image_x = x + x_offset as u16;
-            let image_y = y + y_offset as u16;
+            // Apply scroll offsets from mouse handler
+            let scroll_x = (self.mouse_handler.pdf_scroll_x as i32).max(-(display_width as i32)).min(display_width as i32);
+            let scroll_y = (self.mouse_handler.pdf_scroll_y as i32).max(-(display_height as i32)).min(display_height as i32);
+            
+            // Calculate position with scroll offsets
+            let x_offset = (panel_width_cells.saturating_sub(display_width) / 2) as i32 - scroll_x;
+            let y_offset = (panel_height_cells.saturating_sub(display_height) / 2) as i32 - scroll_y;
+            
+            // Position at centered location within panel (clamp to valid range)
+            let image_x = (x as i32 + x_offset).max(0) as u16;
+            let image_y = (y as i32 + y_offset).max(0) as u16;
             
             // Move cursor to position
             execute!(
@@ -1445,6 +808,7 @@ impl UIRenderer {
                 // Send image at fixed position within panel
                 match KittyImage::send_image_positioned(image, display_width, display_height, image_x, image_y) {
                     Ok(_) => {
+                        self.image_sent = true;  // Mark that we've sent it (for tracking purposes)
                     }
                     Err(_e) => {
                         // Silently fail - don't clutter the display
@@ -1461,18 +825,35 @@ impl UIRenderer {
     
     
     fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-        // Render the Excel grid with block selection
-        for row in 0..height.min(self.excel_grid.cells.len() as u16) {
+        // Apply scrolling offsets to the grid rendering
+        let scroll_y = self.grid.scroll_y;
+        let scroll_x = self.grid.scroll_x;
+        
+        // Apply text zoom (affects font size conceptually, but we'll use it for spacing)
+        let zoom = self.text_zoom;
+        let row_height = if zoom > 1.5 { 2 } else { 1 }; // Double-spaced when zoomed in
+        
+        // Render the Excel grid with block selection and scrolling
+        let visible_rows = height / row_height;
+        for display_row in 0..visible_rows.min(self.grid.cells.len().saturating_sub(scroll_y) as u16) {
+            let grid_row = (display_row + scroll_y as u16) as usize;
+            let screen_y = y + (display_row * row_height);
+            
+            // Skip if row is out of bounds
+            if grid_row >= self.grid.cells.len() || screen_y >= y + height {
+                break;
+            }
+            
             // Build entire row first, then print it all at once
             let mut row_output = String::new();
-            execute!(stdout(), MoveTo(x, y + row))?;
+            execute!(stdout(), MoveTo(x, screen_y))?;
             
             // Line numbers
             if self.config.panels.text.line_numbers && width > 5 {
                 execute!(
                     stdout(),
                     SetForegroundColor(Color::DarkGrey),
-                    Print(format!("{:4}│", row + 1)),  // Line numbers start at 1
+                    Print(format!("{:4}│", grid_row + 1)),  // Line numbers start at 1
                     ResetColor,
                 )?;
                 
@@ -1480,18 +861,22 @@ impl UIRenderer {
                 let text_start = 5;
                 let text_width = width - text_start;
                 
-                // Build the row string
-                for col in 0..text_width.min(self.excel_grid.width as u16) {
-                    let grid_row = row as usize;
-                    let grid_col = col as usize;
+                // Build the row string with horizontal scrolling
+                for display_col in 0..text_width.min(self.grid.width as u16) {
+                    let grid_col = (display_col as usize) + scroll_x;
                     
-                    let ch = if grid_row < self.excel_grid.cells.len() && grid_col < self.excel_grid.cells[grid_row].len() {
-                        self.excel_grid.cells[grid_row][grid_col]
+                    let ch = if grid_row < self.grid.cells.len() && grid_col < self.grid.cells[grid_row].len() {
+                        self.grid.cells[grid_row][grid_col]
                     } else {
                         ' '
                     };
                     
                     row_output.push(ch);
+                    
+                    // Add extra spacing when zoomed in
+                    if zoom > 1.5 && display_col < text_width - 1 {
+                        row_output.push(' ');
+                    }
                 }
                 
                 // Pad the rest of the row with spaces to clear any old content
@@ -1503,24 +888,24 @@ impl UIRenderer {
                 execute!(stdout(), Print(&row_output))?;
                 
                 // Now handle selection and cursor highlighting
-                let grid_row = row as usize;
+                // grid_row already defined above
                 
                 // First, highlight any selected cells in this row
-                if self.excel_grid.selecting {
-                    let (x1, y1, x2, y2) = self.excel_grid.get_selection_bounds();
+                if self.grid.selecting {
+                    let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     if grid_row >= y1 && grid_row <= y2 {
                         // This row has selected cells
                         for col in x1..=x2 {
                             if col < text_width as usize {
                                 execute!(
                                     stdout(),
-                                    MoveTo(x + text_start + col as u16, y + row),
+                                    MoveTo(x + text_start + col as u16, screen_y),
                                     SetBackgroundColor(Color::Blue),
                                     SetForegroundColor(Color::White),
                                 )?;
                                 
-                                let ch = if grid_row < self.excel_grid.cells.len() && col < self.excel_grid.cells[grid_row].len() {
-                                    self.excel_grid.cells[grid_row][col]
+                                let ch = if grid_row < self.grid.cells.len() && col < self.grid.cells[grid_row].len() {
+                                    self.grid.cells[grid_row][col]
                                 } else {
                                     ' '
                                 };
@@ -1532,18 +917,19 @@ impl UIRenderer {
                 }
                 
                 // Highlight search results
-                if self.excel_grid.searching && !self.excel_grid.search_query.is_empty() {
-                    for col in 0..text_width as usize {
-                        if self.excel_grid.is_search_match(col, grid_row) {
+                if self.grid.searching && !self.grid.search_query.is_empty() {
+                    for display_col in 0..text_width as usize {
+                        let grid_col = display_col + scroll_x;
+                        if self.grid.is_search_match(grid_col, grid_row) {
                             execute!(
                                 stdout(),
-                                MoveTo(x + text_start + col as u16, y + row),
+                                MoveTo(x + text_start + display_col as u16, screen_y),
                                 SetBackgroundColor(Color::Yellow),
                                 SetForegroundColor(Color::Black),
                             )?;
                             
-                            let ch = if grid_row < self.excel_grid.cells.len() && col < self.excel_grid.cells[grid_row].len() {
-                                self.excel_grid.cells[grid_row][col]
+                            let ch = if grid_row < self.grid.cells.len() && grid_col < self.grid.cells[grid_row].len() {
+                                self.grid.cells[grid_row][grid_col]
                             } else {
                                 ' '
                             };
@@ -1554,18 +940,20 @@ impl UIRenderer {
                 }
                 
                 // Then highlight the cursor (overwrites selection if at same position)
-                if grid_row == self.excel_grid.cursor.1 {
-                    let cursor_col = self.excel_grid.cursor.0;
-                    if cursor_col < text_width as usize {
+                if grid_row == self.grid.cursor.1 {
+                    let cursor_col = self.grid.cursor.0;
+                    // Check if cursor is visible with horizontal scrolling
+                    if cursor_col >= scroll_x && cursor_col < scroll_x + text_width as usize {
+                        let display_col = cursor_col - scroll_x;
                         execute!(
                             stdout(),
-                            MoveTo(x + text_start + cursor_col as u16, y + row),
+                            MoveTo(x + text_start + display_col as u16, screen_y),
                             SetBackgroundColor(Color::DarkBlue),
                             SetForegroundColor(Color::White),
                         )?;
                         
-                        let ch = if grid_row < self.excel_grid.cells.len() && cursor_col < self.excel_grid.cells[grid_row].len() {
-                            self.excel_grid.cells[grid_row][cursor_col]
+                        let ch = if grid_row < self.grid.cells.len() && cursor_col < self.grid.cells[grid_row].len() {
+                            self.grid.cells[grid_row][cursor_col]
                         } else {
                             ' '
                         };
@@ -1575,12 +963,11 @@ impl UIRenderer {
                 }
             } else {
                 // No line numbers - build entire row as string
-                for col in 0..width.min(self.excel_grid.width as u16) {
-                    let grid_row = row as usize;
-                    let grid_col = col as usize;
+                for display_col in 0..width.min(self.grid.width as u16) {
+                    let grid_col = (display_col as usize) + scroll_x;
                     
-                    let ch = if grid_row < self.excel_grid.cells.len() && grid_col < self.excel_grid.cells[grid_row].len() {
-                        self.excel_grid.cells[grid_row][grid_col]
+                    let ch = if grid_row < self.grid.cells.len() && grid_col < self.grid.cells[grid_row].len() {
+                        self.grid.cells[grid_row][grid_col]
                     } else {
                         ' '
                     };
@@ -1597,24 +984,24 @@ impl UIRenderer {
                 execute!(stdout(), Print(&row_output))?;
                 
                 // Handle selection and cursor highlighting
-                let grid_row = row as usize;
+                // grid_row already defined above
                 
                 // First, highlight any selected cells in this row
-                if self.excel_grid.selecting {
-                    let (x1, y1, x2, y2) = self.excel_grid.get_selection_bounds();
+                if self.grid.selecting {
+                    let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     if grid_row >= y1 && grid_row <= y2 {
                         // This row has selected cells
                         for col in x1..=x2 {
                             if col < width as usize {
                                 execute!(
                                     stdout(),
-                                    MoveTo(x + col as u16, y + row),
+                                    MoveTo(x + col as u16, screen_y),
                                     SetBackgroundColor(Color::Blue),
                                     SetForegroundColor(Color::White),
                                 )?;
                                 
-                                let ch = if grid_row < self.excel_grid.cells.len() && col < self.excel_grid.cells[grid_row].len() {
-                                    self.excel_grid.cells[grid_row][col]
+                                let ch = if grid_row < self.grid.cells.len() && col < self.grid.cells[grid_row].len() {
+                                    self.grid.cells[grid_row][col]
                                 } else {
                                     ' '
                                 };
@@ -1626,18 +1013,18 @@ impl UIRenderer {
                 }
                 
                 // Then highlight the cursor
-                if grid_row == self.excel_grid.cursor.1 {
-                    let cursor_col = self.excel_grid.cursor.0;
+                if grid_row == self.grid.cursor.1 {
+                    let cursor_col = self.grid.cursor.0;
                     if cursor_col < width as usize {
                         execute!(
                             stdout(),
-                            MoveTo(x + cursor_col as u16, y + row),
+                            MoveTo(x + cursor_col as u16, screen_y),
                             SetBackgroundColor(Color::DarkBlue),
                             SetForegroundColor(Color::White),
                         )?;
                         
-                        let ch = if grid_row < self.excel_grid.cells.len() && cursor_col < self.excel_grid.cells[grid_row].len() {
-                            self.excel_grid.cells[grid_row][cursor_col]
+                        let ch = if grid_row < self.grid.cells.len() && cursor_col < self.grid.cells[grid_row].len() {
+                            self.grid.cells[grid_row][cursor_col]
                         } else {
                             ' '
                         };
@@ -1649,7 +1036,7 @@ impl UIRenderer {
         }
         
         // Render search box overlay if searching
-        if self.excel_grid.searching {
+        if self.grid.searching {
             // Draw search box in the middle of the text panel
             let box_width = 60.min(width - 4);
             let box_height = 3;
@@ -1685,7 +1072,7 @@ impl UIRenderer {
             )?;
             
             // Draw search prompt and query
-            let search_text = format!("🔍 Search: {}_", self.excel_grid.search_query);
+            let search_text = format!("🔍 Search: {}_", self.grid.search_query);
             let text_x = box_x + 2;
             let text_y = box_y + 1;
             
@@ -1833,7 +1220,7 @@ impl UIRenderer {
     }
     
     /// Handle keyboard input for Excel grid editing
-    pub fn handle_excel_grid_input(&mut self, key: crossterm::event::KeyCode, shift: bool) {
+    pub fn handle_grid_input(&mut self, key: crossterm::event::KeyCode, shift: bool) {
         // Only mark dirty for keys that actually change content
         let needs_redraw = match key {
             // These keys change content
@@ -1852,7 +1239,7 @@ impl UIRenderer {
             _ => false,
         };
         
-        self.excel_grid.handle_key(key, shift);
+        self.grid.handle_key(key, shift);
         
         if needs_redraw {
             self.right_panel_dirty = true;
@@ -1860,7 +1247,7 @@ impl UIRenderer {
     }
     
     /// Handle keyboard input with full modifiers for advanced editing
-    pub fn handle_excel_grid_input_with_modifiers(&mut self, key: crossterm::event::KeyCode, shift: bool, ctrl: bool, alt: bool) {
+    pub fn handle_grid_input_with_modifiers(&mut self, key: crossterm::event::KeyCode, shift: bool, ctrl: bool, alt: bool) {
         // Only mark dirty for keys that actually change content
         let needs_redraw = match key {
             // Ctrl+V pastes content
@@ -1883,7 +1270,7 @@ impl UIRenderer {
             _ => false,
         };
         
-        self.excel_grid.handle_key_with_modifiers(key, shift, ctrl, alt);
+        self.grid.handle_key_with_modifiers(key, shift, ctrl, alt);
         
         if needs_redraw {
             self.right_panel_dirty = true;
@@ -1892,26 +1279,117 @@ impl UIRenderer {
     
     /// Check if status message changed (for redraw detection)
     pub fn has_status_message(&self) -> bool {
-        self.excel_grid.get_status_message().is_some()
+        self.grid.get_status_message().is_some()
     }
     
     /// Check if Excel grid is in selection mode
     pub fn is_selecting(&self) -> bool {
-        self.excel_grid.selecting
+        self.grid.selecting
     }
     
     /// Check if Excel grid is in search mode
     pub fn is_searching(&self) -> bool {
-        self.excel_grid.searching
+        self.grid.searching
     }
     
     /// Get Excel grid cursor position
     pub fn get_grid_cursor(&self) -> (usize, usize) {
-        self.excel_grid.cursor
+        self.grid.cursor
+    }
+    
+    /// Enhanced mouse handling with zone detection, scrolling, and zoom
+    pub fn handle_mouse_enhanced(&mut self, event: crossterm::event::MouseEvent) -> bool {
+        use crossterm::event::{MouseEventKind, MouseButton, KeyModifiers};
+        
+        // Update zone detection
+        let zone = self.mouse_handler.detect_zone(event.column, event.row);
+        let mut needs_redraw = false;
+        
+        // Handle scroll events
+        match event.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                // Check for zoom (Ctrl+Scroll)
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    let (handled, action) = self.mouse_handler.handle_zoom(
+                        &event, 
+                        matches!(event.kind, MouseEventKind::ScrollUp)
+                    );
+                    if handled {
+                        match action {
+                            ZoomAction::PdfZoom(level) => {
+                                self.pdf_zoom = level;
+                                self.image_sent = false; // Re-render PDF at new zoom
+                                needs_redraw = true;
+                            }
+                            ZoomAction::TextZoom(level) => {
+                                self.text_zoom = level;
+                                self.right_panel_dirty = true;
+                                needs_redraw = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    // Regular scrolling (check for Shift for horizontal)
+                    let horizontal = event.modifiers.contains(KeyModifiers::SHIFT);
+                    let (handled, action) = self.mouse_handler.handle_scroll(&event, horizontal);
+                    if handled {
+                        match action {
+                            ScrollAction::PdfScroll(_x, y) => {
+                                // Update PDF scroll offset
+                                self.scroll_offset = (y as usize).min(100); // Clamp to reasonable range
+                                needs_redraw = true;
+                            }
+                            ScrollAction::TextScroll(_x, y) => {
+                                // Update text scroll offset
+                                self.grid.scroll_y = y;
+                                self.right_panel_dirty = true;
+                                needs_redraw = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
+                // Horizontal scrolling
+                let (handled, action) = self.mouse_handler.handle_scroll(&event, true);
+                if handled {
+                    match action {
+                        ScrollAction::TextScroll(x, _y) => {
+                            self.grid.scroll_x = x;
+                            self.right_panel_dirty = true;
+                            needs_redraw = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) | 
+            MouseEventKind::Drag(MouseButton::Left) | 
+            MouseEventKind::Up(MouseButton::Left) => {
+                // Handle clicks/drags based on zone
+                match zone {
+                    MouseZone::TextEditor => {
+                        // Pass to existing grid handler
+                        self.handle_mouse_for_grid(event);
+                        needs_redraw = true;
+                    }
+                    MouseZone::PdfPanel => {
+                        // Could implement PDF interaction here (e.g., text selection)
+                        needs_redraw = false;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        
+        needs_redraw
     }
     
     /// Handle mouse events for Excel grid
-    pub fn handle_mouse_for_excel_grid(&mut self, event: crossterm::event::MouseEvent) {
+    pub fn handle_mouse_for_grid(&mut self, event: crossterm::event::MouseEvent) {
         // Check if mouse is in the right panel (text area)
         let (term_width, _term_height) = match terminal::size() {
             Ok((w, h)) => (w, h),
@@ -1932,15 +1410,15 @@ impl UIRenderer {
             use crossterm::event::MouseEventKind;
             match event.kind {
                 MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                    self.excel_grid.handle_mouse_down(grid_col, grid_row);
+                    self.grid.handle_mouse_down(grid_col, grid_row);
                     self.right_panel_dirty = true;  // Mark for redraw when selection starts
                 }
                 MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
-                    self.excel_grid.handle_mouse_drag(grid_col, grid_row);
+                    self.grid.handle_mouse_drag(grid_col, grid_row);
                     self.right_panel_dirty = true;  // Mark for redraw during selection
                 }
                 MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                    self.excel_grid.handle_mouse_up(grid_col, grid_row);
+                    self.grid.handle_mouse_up(grid_col, grid_row);
                     self.right_panel_dirty = true;  // Mark for redraw when selection ends
                 }
                 _ => {}
@@ -1950,7 +1428,7 @@ impl UIRenderer {
     
     /// Save the edited text to a file
     pub fn save_edited_text(&self, path: &PathBuf) -> Result<()> {
-        let content = self.excel_grid.to_string();
+        let content = self.grid.to_string();
         std::fs::write(path, content)?;
         Ok(())
     }
@@ -1996,19 +1474,19 @@ impl UIRenderer {
         self.right_panel_dirty = true; // Mark right panel for redraw with new content
         
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
-        eprintln!("[INFO] Left pane: lopdf-kitty rendering");
-        eprintln!("[INFO] Right pane: pdftotext extraction");
+        // eprintln!("[INFO] Left pane: lopdf-kitty rendering");
+        // eprintln!("[INFO] Right pane: pdftotext extraction");
         self.add_debug_message(msg.clone());
-        eprintln!("[DEBUG] {}", msg);
+        // eprintln!("[DEBUG] {}", msg);
         
         // Load PDF page count - chonker7 style with fresh instance
         self.add_debug_message("Getting page count...".to_string());
-        eprintln!("[DEBUG] Getting page count...");
-        self.total_pages = content_extractor::get_page_count(&pdf_path)?;
+        // eprintln!("[DEBUG] Getting page count...");
+        self.total_pages = pdf_renderer::get_pdf_page_count(&pdf_path)?;
         self.current_page = 1;
         let msg = format!("Page count: {}", self.total_pages);
         self.add_debug_message(msg.clone());
-        eprintln!("[DEBUG] {}", msg);
+        // eprintln!("[DEBUG] {}", msg);
         
         // Render first page image - same size as chonker7
         self.add_debug_message("Rendering PDF with lopdf-kitty...".to_string());
@@ -2022,9 +1500,9 @@ impl UIRenderer {
         
         // Extract text using pdftotext for the right panel
         self.add_debug_message("Extracting text with pdftotext...".to_string());
-        eprintln!("[DEBUG] Running pdftotext with layout preservation...");
+        // eprintln!("[DEBUG] Running pdftotext with layout preservation...");
         
-        let extraction_result = match std::process::Command::new("pdftotext")
+        let mut extraction_result = match std::process::Command::new("pdftotext")
             .args(&[
                 "-layout",  // Preserve layout
                 "-nopgbrk", // No page breaks
@@ -2033,24 +1511,53 @@ impl UIRenderer {
                 pdf_path.to_str().unwrap(),
                 "-"  // Output to stdout
             ])
+            .stderr(std::process::Stdio::null())  // Suppress stderr
             .output() {
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).to_string();
-                eprintln!("[DEBUG] pdftotext extracted {} characters", text.len());
+                // eprintln!("[DEBUG] pdftotext extracted {} characters", text.len());
                 text
             }
             _ => {
-                eprintln!("[WARNING] pdftotext failed, using fallback");
-                "Text extraction failed - pdftotext not available".to_string()
+                // eprintln!("[WARNING] pdftotext failed, using fallback");
+                "".to_string() // Empty string to trigger OCR check
             }
         };
         
-        let msg = format!("Extraction complete using pdftotext");
+        // Check if we need OCR (scanned PDF with no text layer)
+        use crate::pdf::ocr;
+        if ocr::needs_ocr(&extraction_result) {
+            // eprintln!("[INFO] PDF appears to be scanned, attempting OCR...");
+            self.add_debug_message("No text layer detected, attempting OCR...".to_string());
+            
+            // Use the already-rendered PDF image for OCR
+            if let Some(ref image) = self.current_pdf_image {
+                match ocr::ocr_image(image) {
+                    Ok(ocr_text) => {
+                        // eprintln!("[DEBUG] OCR extracted {} characters", ocr_text.len());
+                        extraction_result = ocr_text;
+                        self.extraction_method = Some("OCR (Tesseract)".to_string());
+                    }
+                    Err(e) => {
+                        // eprintln!("[ERROR] OCR failed: {}", e);
+                        self.add_debug_message(format!("OCR failed: {}", e));
+                        extraction_result = format!("OCR failed: {}\n\nThis PDF appears to be scanned and requires OCR.", e);
+                        self.extraction_method = Some("Failed OCR".to_string());
+                    }
+                }
+            } else {
+                extraction_result = "No image available for OCR".to_string();
+                self.extraction_method = Some("No Image".to_string());
+            }
+        } else {
+            self.extraction_method = Some("pdftotext".to_string());
+        }
+        
+        let msg = format!("Extraction complete using {}", self.extraction_method.as_ref().unwrap_or(&"unknown".to_string()));
         self.add_debug_message(msg.clone());
-        eprintln!("[DEBUG] {}", msg);
+        // eprintln!("[DEBUG] {}", msg);
         
         // Store metadata
-        self.extraction_method = Some("pdftotext".to_string());
         self.extraction_quality = Some(0.8);
         self.extraction_timestamp = Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
         
@@ -2065,7 +1572,7 @@ impl UIRenderer {
         let grid_width = (term_width / 2 - 4) as usize; // Half terminal minus borders
         
         // Update Excel grid with the extracted text
-        self.excel_grid = ExcelGrid::from_pdftext(&text_with_metadata, grid_width.max(40));
+        self.grid = Grid::from_pdftext(&text_with_metadata, grid_width.max(40));
         
         // Update state
         self.current_pdf_path = Some(pdf_path);
@@ -2090,6 +1597,7 @@ impl UIRenderer {
                 pdf_path.to_str().unwrap(),
                 "-"
             ])
+            .stderr(std::process::Stdio::null())  // Suppress stderr
             .output();
             
         if let Ok(output) = output {

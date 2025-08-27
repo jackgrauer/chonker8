@@ -12,7 +12,7 @@ pub mod core {
 pub mod pdf {
     pub mod render_with_pdftoppm;
     pub mod page_renderer;
-    pub mod extract_text;
+    pub mod ocr;
 }
 
 // Terminal display
@@ -24,6 +24,7 @@ pub mod display {
     pub mod terminal_ui;
     pub mod file_browser;
     pub mod theme;
+    pub mod mouse_zones;
 }
 
 // Storage
@@ -36,8 +37,4 @@ pub use display::ab_comparison_ui as enhanced_ab_ui;
 pub use display::file_browser as integrated_file_picker;
 pub use pdf::render_with_pdftoppm as system_pdf_renderer;
 pub use pdf::page_renderer as pdf_renderer;
-pub use pdf::extract_text as content_extractor;
 pub use display::theme;
-
-// Additional compatibility aliases
-pub use pdf::extract_text as pdf_extraction;

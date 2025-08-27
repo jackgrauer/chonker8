@@ -108,7 +108,7 @@ impl HotReloadManager {
                             if path.to_string_lossy().contains("pdf_processor.rs") {
                                 changed_files.push(path.clone());
                                 needs_rebuild = true;
-                                println!("🔥 Detected change in pdf_processor.rs - triggering immediate rebuild");
+                                // Silenced: println!("🔥 Detected change in pdf_processor.rs - triggering immediate rebuild");
                             } else if ext == "rs" {
                                 changed_files.push(path.clone());
                                 needs_rebuild = true;
@@ -121,7 +121,7 @@ impl HotReloadManager {
         
         // Immediate rebuild on any change - zero debouncing
         if needs_rebuild {
-            println!("🔄 Files changed: {:?}", changed_files);
+            // Silenced: println!("🔄 Files changed: {:?}", changed_files);
             
             // Check if main app files changed (requires full restart)
             let main_app_changed = changed_files.iter().any(|path| {
@@ -135,7 +135,7 @@ impl HotReloadManager {
             });
             
             let build_request = if main_app_changed {
-                println!("🔥 Main app files changed - will restart after rebuild");
+                // Silenced: println!("🔥 Main app files changed - will restart after rebuild");
                 BuildRequest {
                     target: "chonker8-hot".to_string(),
                     features: vec!["default".to_string()],
@@ -164,7 +164,7 @@ impl HotReloadManager {
         while let Ok(request) = build_req_rx.recv() {
             let start_time = Instant::now();
             
-            println!("🔨 Building {}...", request.target);
+            // Silenced: println!("🔨 Building {}...", request.target);
             
             // Log build start to debug file
             if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -194,7 +194,7 @@ impl HotReloadManager {
                     (success, stderr, stdout)
                 }
                 Err(e) => {
-                    eprintln!("[BUILD] Failed to execute cargo: {}", e);
+                    // Silenced: eprintln!("[BUILD] Failed to execute cargo: {}", e);
                     (false, format!("Failed to execute cargo: {}", e), String::new())
                 }
             };
@@ -214,14 +214,14 @@ impl HotReloadManager {
                         let _ = writeln!(file, "[{}] [BUILD] {}", 
                             chrono::Local::now().format("%H:%M:%S%.3f"), 
                             line);
-                        eprintln!("[BUILD] {}", line);
+                        // Silenced: eprintln!("[BUILD] {}", line);
                     }
                     // Then log stderr (usually contains errors)
                     for line in stderr_output.lines() {
                         let _ = writeln!(file, "[{}] [BUILD] {}", 
                             chrono::Local::now().format("%H:%M:%S%.3f"), 
                             line);
-                        eprintln!("[BUILD] {}", line);
+                        // Silenced: eprintln!("[BUILD] {}", line);
                     }
                 }
             }
@@ -245,9 +245,9 @@ impl HotReloadManager {
             };
             
             if success {
-                println!("✅ Build completed in {:?}", result.build_time);
+                // Silenced: println!("✅ Build completed in {:?}", result.build_time);
             } else {
-                println!("❌ Build failed for {}", request.target);
+                // Silenced: println!("❌ Build failed for {}", request.target);
             }
             
             if build_result_tx.send(result).is_err() {
@@ -266,7 +266,7 @@ impl HotReloadManager {
     }
     
     pub fn restart_app() -> ! {
-        println!("🔄 Hot-reloading app...");
+        // Silenced: println!("🔄 Hot-reloading app...");
         
         // Get current args
         let args: Vec<String> = env::args().collect();
@@ -278,7 +278,7 @@ impl HotReloadManager {
         // Preserve Kitty environment for perfect hot-reload
         if let Ok(kitty_id) = env::var("KITTY_WINDOW_ID") {
             cmd.env("KITTY_WINDOW_ID", kitty_id);
-            eprintln!("✅ Preserving Kitty graphics context");
+            // Silenced: eprintln!("✅ Preserving Kitty graphics context");
         }
         if let Ok(term) = env::var("TERM") {
             cmd.env("TERM", term);
@@ -293,7 +293,7 @@ impl HotReloadManager {
         let err = cmd.exec();
         
         // If exec fails, exit with error
-        eprintln!("Failed to restart app: {}", err);
+        // Silenced: eprintln!("Failed to restart app: {}", err);
         std::process::exit(1);
     }
 }
@@ -324,7 +324,7 @@ impl HotReloadablePDFProcessor {
         // 2. Load new plugin from plugin_path
         // 3. Update current_processor
         
-        println!("🔄 Reloading PDF processor plugin...");
+        // Silenced: println!("🔄 Reloading PDF processor plugin...");
         // TODO: Implement dynamic library loading
         Ok(())
     }

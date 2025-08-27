@@ -198,7 +198,7 @@ impl EnhancedABComparison {
             ) {
                 Ok(image_id) => {
                     self.pdf_image_id = Some(image_id);
-                    eprintln!("[UI] Displayed PDF via Kitty protocol with ID {}", image_id);
+                    // eprintln!("[UI] Displayed PDF via Kitty protocol with ID {}", image_id);
                 }
                 Err(e) => {
                     // Fallback text if Kitty not supported

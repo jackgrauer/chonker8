@@ -24,7 +24,7 @@ use std::{
 use ui_config::UIConfig;
 use ui_renderer::{UIRenderer, Screen};
 use hot_reload_manager::HotReloadManager;
-use std::process::{Command, Stdio};
+// Removed unused imports
 // use chonker8::integrated_file_picker::IntegratedFilePicker; // Unused import
 
 #[derive(Parser, Debug)]
@@ -63,10 +63,12 @@ impl App {
         let config = UIConfig::load()?;
         let renderer = UIRenderer::new(config.clone());
         
-        // Setup file watcher for ui.toml
+        // Setup file watcher for ui.toml (only if it exists)
         let (tx, rx) = channel();
         let mut watcher = notify::recommended_watcher(tx)?;
-        watcher.watch(Path::new("ui.toml"), RecursiveMode::NonRecursive)?;
+        if Path::new("ui.toml").exists() {
+            watcher.watch(Path::new("ui.toml"), RecursiveMode::NonRecursive)?;
+        }
         
         // Setup hot-reload manager for Rust code
         let hot_reload_manager = HotReloadManager::new()?;
@@ -109,12 +111,12 @@ impl App {
                     // eprintln!("[DEBUG] Switched to PDF viewer screen");
                 }
                 Err(e) => {
-                    eprintln!("[ERROR] ❌ Failed to load PDF: {}", e);
+                    // Silenced: eprintln!("[ERROR] ❌ Failed to load PDF: {}", e);
                     return Err(e);
                 }
             }
         } else {
-            eprintln!("[ERROR] ❌ PDF file does not exist: {}", path);
+            // Silenced: eprintln!("[ERROR] ❌ PDF file does not exist: {}", path);
             return Err(anyhow::anyhow!("PDF file not found: {}", path));
         }
         
@@ -172,7 +174,7 @@ impl App {
                         execute!(stdout(), Show, LeaveAlternateScreen)?;
                         terminal::disable_raw_mode()?;
                         
-                        println!("🔄 Main app rebuilt - hot-reloading...");
+                        // Silenced: println!("🔄 Main app rebuilt - hot-reloading...");
                         std::thread::sleep(Duration::from_millis(100)); // Brief pause
                         
                         // Restart the application
@@ -263,7 +265,7 @@ impl App {
                 unsafe {
                     NON_TTY_COUNTER += 1;
                     if NON_TTY_COUNTER > 40 { // 2 seconds
-                        eprintln!("[DEBUG] Non-TTY mode timeout, exiting gracefully");
+                        // Silenced: eprintln!("[DEBUG] Non-TTY mode timeout, exiting gracefully");
                         self.running = false;
                     }
                 }
@@ -306,9 +308,9 @@ impl App {
                 if let Some(pdf_path) = self.renderer.current_pdf_path.clone() {
                     let txt_path = pdf_path.with_extension("edited.txt");
                     if let Err(e) = self.renderer.save_edited_text(&txt_path) {
-                        eprintln!("Failed to save: {}", e);
+                        // Silenced: eprintln!("Failed to save: {}", e);
                     } else {
-                        eprintln!("Saved edited text to {:?}", txt_path);
+                        // Silenced: eprintln!("Saved edited text to {:?}", txt_path);
                     }
                 }
                 return Ok(());
@@ -323,17 +325,17 @@ impl App {
             match key.code {
                 // Ctrl+F for search needs special handling
                 KeyCode::Char('f') if ctrl_held => {
-                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.renderer.handle_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     self.needs_redraw = true;
                 }
                 // These keys always need redraw
                 KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Enter => {
-                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.renderer.handle_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     self.needs_redraw = true;
                 }
                 // F3 for search
                 KeyCode::F(3) => {
-                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.renderer.handle_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     self.needs_redraw = true;
                 }
                 // Arrow keys and selection only redraw if something changes
@@ -342,7 +344,7 @@ impl App {
                     let old_cursor = self.renderer.get_grid_cursor();
                     let old_selecting = self.renderer.is_selecting();
                     
-                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.renderer.handle_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     
                     let new_cursor = self.renderer.get_grid_cursor();
                     let new_selecting = self.renderer.is_selecting();
@@ -356,14 +358,14 @@ impl App {
                 KeyCode::Esc => {
                     let was_selecting = self.renderer.is_selecting();
                     let was_searching = self.renderer.is_searching();
-                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.renderer.handle_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     if was_selecting || was_searching {
                         self.needs_redraw = true;
                     }
                 }
                 // Ignore other keys
                 _ => {
-                    self.renderer.handle_excel_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
+                    self.renderer.handle_grid_input_with_modifiers(key.code, shift_held, ctrl_held, alt_held);
                     // Don't set needs_redraw for other keys
                 }
             }
@@ -376,7 +378,7 @@ impl App {
             if let Some(selected_file) = self.renderer.handle_file_picker_input(key)? {
                 // Load the selected PDF and switch to PDF viewer
                 if let Err(e) = self.load_pdf(&selected_file) {
-                    eprintln!("Failed to load PDF: {}", e);
+                    // Silenced: eprintln!("Failed to load PDF: {}", e);
                 }
                 self.renderer.set_screen(Screen::PdfViewer);
                 self.needs_redraw = true;
@@ -418,46 +420,12 @@ impl App {
     }
     
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
-        // Debug screen removed
-        
-        // Handle mouse wheel scrolling on PDF viewer screen
+        // Use enhanced mouse handling with zone detection
         let screen = self.renderer.current_screen();
         if *screen == Screen::PdfViewer {
-            // Track if we need redraw
-            let mut should_redraw = false;
-            
-            // Handle scrolling first
-            match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    self.renderer.scroll_up();
-                    should_redraw = true;
-                }
-                MouseEventKind::ScrollDown => {
-                    self.renderer.scroll_down();
-                    should_redraw = true;
-                }
-                MouseEventKind::Down(crossterm::event::MouseButton::Left) |
-                MouseEventKind::Drag(crossterm::event::MouseButton::Left) |
-                MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                    // Check if mouse is in the text area (right panel)
-                    let (term_width, _) = terminal::size().unwrap_or((80, 24));
-                    let split_col = term_width / 2;
-                    
-                    // Only handle and redraw if click is in text area
-                    if mouse.column >= split_col {
-                        self.renderer.handle_mouse_for_excel_grid(mouse);
-                        should_redraw = true;
-                    }
-                }
-                MouseEventKind::Down(_) | MouseEventKind::Up(_) => {
-                    // Ignore other mouse buttons
-                }
-                _ => {
-                    // Ignore mouse move events to prevent flickering
-                }
-            }
-            
-            if should_redraw {
+            // Use the new enhanced mouse handler
+            let needs_redraw = self.renderer.handle_mouse_enhanced(mouse);
+            if needs_redraw {
                 self.needs_redraw = true;
             }
         }
@@ -479,37 +447,9 @@ impl App {
         Ok(())
     }
     
-    fn call_pdf_processor(&self, pdf_path: &str, page: usize) -> Result<Vec<Vec<char>>> {
-        // Call the external PDF processor binary
-        let output = Command::new("./target/release/pdf-processor")
-            .args(&["process", pdf_path, &page.to_string()])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output();
-        
-        match output {
-            Ok(output) if output.status.success() => {
-                // Parse the output back into a character grid
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let lines: Vec<&str> = stdout.lines().collect();
-                
-                let mut grid = vec![vec![' '; 80]; 24];
-                for (i, line) in lines.iter().enumerate() {
-                    if i < grid.len() {
-                        for (j, ch) in line.chars().enumerate() {
-                            if j < grid[i].len() {
-                                grid[i][j] = ch;
-                            }
-                        }
-                    }
-                }
-                Ok(grid)
-            },
-            _ => {
-                // Fallback to original demo content if processor fails
-                Ok(self.get_fallback_content())
-            }
-        }
+    fn call_pdf_processor(&self, _pdf_path: &str, _page: usize) -> Result<Vec<Vec<char>>> {
+        // Just return fallback content for now since pdf-processor doesn't exist
+        Ok(self.get_fallback_content())
     }
     
     fn get_fallback_content(&self) -> Vec<Vec<char>> {
@@ -630,12 +570,12 @@ fn main() -> Result<()> {
             // eprintln!("[INFO] Right pane: pdftotext extraction");
             app.load_pdf(&test_pdf.to_string_lossy())?;
         } else {
-        // Show usage
-        println!("Usage: chonker8-hot [pdf_file]");
-        println!("       chonker8-hot --help");
-        println!("       chonker8-hot --test-kitty");
-        println!("       chonker8-hot --test-vello [pdf_file]");
-        println!("\nStarting in demo mode...");
+        // Silenced usage help - just start quietly
+        // println!("Usage: chonker8-hot [pdf_file]");
+        // println!("       chonker8-hot --help");
+        // println!("       chonker8-hot --test-kitty");
+        // println!("       chonker8-hot --test-vello [pdf_file]");
+        // println!("\nStarting in demo mode...");
         
         // Create demo content for page 1
         let mut demo_content = vec![vec![' '; 80]; 24];
@@ -695,7 +635,7 @@ fn main() -> Result<()> {
         eprintln!("║ If any of these didn't work, please report the issue.     ║");
         eprintln!("╚══════════════════════════════════════════════════════════╝");
     } else {
-        println!("Thanks for using Chonker8!");
+        // Silenced: println!("Thanks for using Chonker8!");
     }
     Ok(())
 }

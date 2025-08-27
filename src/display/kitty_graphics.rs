@@ -27,21 +27,16 @@ impl KittyProtocol {
     fn detect_support() -> bool {
         // Check TERM environment variable
         if let Ok(term) = std::env::var("TERM") {
-            eprintln!("[KITTY] TERM={}", term);
             if term.contains("kitty") {
-                eprintln!("[KITTY] Detected Kitty via TERM");
                 return true;
             }
         }
         
         // Check KITTY_WINDOW_ID (more reliable)
-        if let Ok(window_id) = std::env::var("KITTY_WINDOW_ID") {
-            eprintln!("[KITTY] KITTY_WINDOW_ID={}", window_id);
-            eprintln!("[KITTY] Detected Kitty via KITTY_WINDOW_ID");
+        if std::env::var("KITTY_WINDOW_ID").is_ok() {
             return true;
         }
         
-        eprintln!("[KITTY] No Kitty terminal detected");
         false
     }
     
@@ -64,23 +59,20 @@ impl KittyProtocol {
         _width: Option<u32>,
         _height: Option<u32>,
     ) -> Result<u32> {
-        eprintln!("[KITTY] display_image called at ({}, {}) supported={}", x, y, self.supported);
         if !self.supported {
             bail!("Kitty graphics protocol not supported");
         }
         
         // Move cursor to the position first
-        eprintln!("[KITTY] Moving cursor to ({}, {})", y + 1, x + 1);
         print!("\x1b[{};{}H", y + 1, x + 1);  // Terminal positions are 1-based
         use std::io::{self, Write};
         let _ = io::stdout().flush();
         
         // Convert image to PNG format
-        eprintln!("[KITTY] Converting image to PNG format");
         let mut png_data = Vec::new();
         let mut cursor = Cursor::new(&mut png_data);
         image.write_to(&mut cursor, ImageFormat::Png)?;
-        eprintln!("[KITTY] PNG data size: {} bytes", png_data.len());
+        // PNG data size: png_data.len() bytes
         
         // Get dimensions - use smaller size for testing
         let (img_width, img_height) = (image.width(), image.height());
@@ -88,13 +80,12 @@ impl KittyProtocol {
         let scale = 0.2; // Scale to 20% for testing
         let display_width = ((img_width as f32 * scale) as u32).max(100);
         let display_height = ((img_height as f32 * scale) as u32).max(100);
-        eprintln!("[KITTY] Image dimensions: {}x{}, display: {}x{}", 
-                 img_width, img_height, display_width, display_height);
+        // Image dimensions: img_width x img_height, display: display_width x display_height
         
         // Transmit and display image at current cursor position
-        eprintln!("[KITTY] Starting image transmission...");
+        // Starting image transmission...
         let image_id = self.transmit_image_data(&png_data, display_width, display_height)?;
-        eprintln!("[KITTY] Image transmitted successfully with ID: {}", image_id);
+        // Image transmitted successfully with ID: image_id
         
         self.active_images.push(image_id);
         Ok(image_id)
@@ -109,13 +100,12 @@ impl KittyProtocol {
     ) -> Result<u32> {
         let image_id = self.next_image_id;
         self.next_image_id += 1;
-        eprintln!("[KITTY] transmit_image_data: ID={}, size={}x{}, data_len={}", 
-                 image_id, width, height, data.len());
+        // transmit_image_data: ID=image_id, size=width x height, data_len=data.len()
         
         // Split data into chunks
         let chunks: Vec<&[u8]> = data.chunks(self.chunk_size).collect();
         let total_chunks = chunks.len();
-        eprintln!("[KITTY] Splitting into {} chunks of max {} bytes", total_chunks, self.chunk_size);
+        // Splitting into total_chunks chunks of max self.chunk_size bytes
         
         for (i, chunk) in chunks.iter().enumerate() {
             let is_first = i == 0;
@@ -123,8 +113,7 @@ impl KittyProtocol {
             
             // Encode chunk to base64
             let encoded = BASE64.encode(chunk);
-            eprintln!("[KITTY] Chunk {}/{}: {} bytes -> {} base64 chars", 
-                     i+1, total_chunks, chunk.len(), encoded.len());
+            // Chunk i+1/total_chunks: chunk.len() bytes -> encoded.len() base64 chars
             
             // Build control data
             let mut control = String::new();
@@ -141,7 +130,7 @@ impl KittyProtocol {
                     height,
                     if is_last { 0 } else { 1 }
                 ));
-                eprintln!("[KITTY] First chunk control: {}", control);
+                // First chunk control
             } else {
                 // Continuation chunks
                 control.push_str(&format!(
@@ -150,7 +139,7 @@ impl KittyProtocol {
                     if is_last { 0 } else { 1 }
                 ));
                 if is_last {
-                    eprintln!("[KITTY] Last chunk control: {}", control);
+                    // Last chunk control
                 }
             }
             
@@ -160,7 +149,7 @@ impl KittyProtocol {
             let _ = io::stdout().flush();
         }
         
-        eprintln!("[KITTY] All {} chunks transmitted", total_chunks);
+        // All chunks transmitted
         Ok(image_id)
     }
     

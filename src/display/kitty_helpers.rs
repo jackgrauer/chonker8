@@ -25,7 +25,7 @@ impl SimpleKitty {
         print!("\x1b_Ga=T,f=100;{}\x1b\\", encoded);
         io::stdout().flush()?;
         
-        eprintln!("[SIMPLE_KITTY] Sent {} bytes as {} base64 chars", png_data.len(), encoded.len());
+        // eprintln!("[SIMPLE_KITTY] Sent {} bytes as {} base64 chars", png_data.len(), encoded.len());
         
         Ok(())
     }
@@ -49,7 +49,7 @@ impl SimpleKitty {
         print!("\x1b_Ga=T,f=100,s={},v={},U=1;{}\x1b\\", width, height, encoded);
         io::stdout().flush()?;
         
-        eprintln!("[SIMPLE_KITTY] Transmitted and placed {}x{}", width, height);
+        // eprintln!("[SIMPLE_KITTY] Transmitted and placed {}x{}", width, height);
         
         Ok(())
     }
@@ -77,7 +77,7 @@ impl SimpleKitty {
         print!("\x1b_Ga=p,i=1,X={},Y={}\x1b\\", x, y);
         io::stdout().flush()?;
         
-        eprintln!("[SIMPLE_KITTY] Positioned at ({},{}) size {}x{}", x, y, width, height);
+        // eprintln!("[SIMPLE_KITTY] Positioned at ({},{}) size {}x{}", x, y, width, height);
         
         Ok(())
     }

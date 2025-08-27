@@ -89,10 +89,49 @@ fn default_toggle_wrap() -> String { "w".to_string() }
 fn default_toggle_mode() -> String { "m".to_string() }
 fn default_reload_config() -> String { "r".to_string() }
 
+impl Default for UIConfig {
+    fn default() -> Self {
+        Self {
+            mode: "pdf".to_string(),
+            layout: LayoutConfig {
+                left_panel: "pdf".to_string(),
+                right_panel: "text".to_string(),
+                status_bar: true,
+            },
+            theme: ThemeConfig {
+                border: "rounded".to_string(),
+                highlight: "yellow".to_string(),
+                background: "black".to_string(),
+                text_color: "white".to_string(),
+                clear_on_resize: true,
+            },
+            panels: PanelsConfig {
+                pdf: PdfPanelConfig {
+                    width_percent: 50.0,
+                    show_page_num: true,
+                    show_scroll_bar: false,
+                },
+                text: TextPanelConfig {
+                    width_percent: 50.0,
+                    show_cursor: true,
+                    wrap_text: false,
+                    line_numbers: false,
+                },
+            },
+            hotkeys: HotkeyConfig::default(),
+        }
+    }
+}
+
 impl UIConfig {
     pub fn load() -> Result<Self> {
-        let content = fs::read_to_string("ui.toml")?;
-        Ok(toml::from_str(&content)?)
+        // Try to load from ui.toml, or use defaults if it doesn't exist
+        if let Ok(content) = fs::read_to_string("ui.toml") {
+            Ok(toml::from_str(&content)?)
+        } else {
+            // Return default config if ui.toml doesn't exist
+            Ok(Self::default())
+        }
     }
     
     pub fn save(&self) -> Result<()> {
