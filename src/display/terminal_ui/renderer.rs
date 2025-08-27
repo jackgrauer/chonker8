@@ -1278,11 +1278,15 @@ impl UIRenderer {
             crossterm::event::KeyCode::Delete |
             crossterm::event::KeyCode::Backspace |
             crossterm::event::KeyCode::Enter => true,
-            // Arrow keys with shift (selection)
+            // Arrow keys always need redraw (cursor movement or selection)
             crossterm::event::KeyCode::Up |
             crossterm::event::KeyCode::Down |
             crossterm::event::KeyCode::Left |
-            crossterm::event::KeyCode::Right => shift,
+            crossterm::event::KeyCode::Right |
+            crossterm::event::KeyCode::PageUp |
+            crossterm::event::KeyCode::PageDown |
+            crossterm::event::KeyCode::Home |
+            crossterm::event::KeyCode::End => true,
             _ => false,
         };
         
@@ -1290,6 +1294,7 @@ impl UIRenderer {
         
         if needs_redraw {
             self.right_panel_dirty = true;
+            self.viewports.text_viewport.mark_dirty();
         }
     }
     
