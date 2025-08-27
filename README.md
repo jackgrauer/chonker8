@@ -1,17 +1,20 @@
 # Chonker8 - Modern Terminal PDF Viewer
 
-A high-performance terminal-based PDF viewer with split-screen display and advanced text extraction capabilities.
+A lightweight (~5,000 lines), high-performance terminal-based PDF viewer with split-screen display, hot-reload support, and advanced text extraction capabilities.
 
 ## Features
 
 - **Split-Screen View**: PDF image on the left, extracted text on the right
-- **Excel-Style Grid Editor**: Edit extracted text with full keyboard and mouse support
+- **Kitty Graphics Protocol**: Native image display in supported terminals
+- **OCR Support**: Automatic OCR for scanned PDFs using Tesseract
+- **Hot Reload**: Automatic rebuild and UI refresh during development (chonker8-hot)
+- **Large PDF Support**: Handles massive PDFs with timeouts and proper error handling
+- **File Browser**: Built-in fuzzy file picker for PDF selection
+- **Excel-Style Grid**: Navigate extracted text in a grid format
 - **Dark Mode**: Automatic color inversion for terminal-friendly viewing
-- **Search Functionality**: Fuzzy search with Ctrl+F powered by Nucleo
-- **Mouse Support**: Click, drag, select, and edit with full mouse integration
-- **Hot Reload**: Automatic UI refresh when PDF changes
+- **Viewport Management**: Independent rendering regions prevent UI corruption
 - **Cross-Platform**: Works on macOS, Linux, and Windows
-- **No PDFium Dependency**: Uses reliable system tools (pdftoppm, pdftotext)
+- **No PDFium Dependency**: Uses reliable system tools (pdftoppm, pdftotext, pdfinfo)
 
 ## Installation
 
@@ -20,11 +23,14 @@ A high-performance terminal-based PDF viewer with split-screen display and advan
 git clone https://github.com/jackgrauer/chonker8.git
 cd chonker8
 
-# Build the project
-cargo build --release
+# Build the project (with pdfium library path on macOS)
+DYLD_LIBRARY_PATH=./lib cargo build --release
 
-# Run the viewer
+# Run the standard viewer
 ./target/release/chonker8 path/to/your.pdf
+
+# Or run the hot-reload version for development
+./target/release/chonker8-hot path/to/your.pdf
 ```
 
 ## Requirements
@@ -33,22 +39,25 @@ cargo build --release
 - System tools:
   - `pdftoppm` (for PDF rendering)
   - `pdftotext` (for text extraction)
+  - `pdfinfo` (for PDF metadata)
+  - `tesseract` (optional, for OCR support)
+  - `timeout` (for handling large files)
   
 ### Installing Dependencies
 
 **macOS:**
 ```bash
-brew install poppler
+brew install poppler tesseract
 ```
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install poppler-utils
+sudo apt-get install poppler-utils tesseract-ocr
 ```
 
 **Arch Linux:**
 ```bash
-sudo pacman -S poppler
+sudo pacman -S poppler tesseract
 ```
 
 ## Usage
@@ -56,14 +65,17 @@ sudo pacman -S poppler
 ### Command Line
 
 ```bash
-# Open a PDF file
+# Open a PDF file (standard version)
 ./target/release/chonker8 document.pdf
 
-# Run in test mode
-./target/release/chonker8 --test-kitty
+# Run hot-reload version (auto-rebuilds on code changes)
+./target/release/chonker8-hot document.pdf
 
-# Show version
-./target/release/chonker8 --version
+# Open file browser if no PDF specified
+./target/release/chonker8-hot
+
+# Debug output is written to:
+cat /tmp/chonker8_debug.txt
 ```
 
 ### Keyboard Shortcuts
@@ -111,36 +123,61 @@ sudo pacman -S poppler
 
 ## Architecture
 
-Chonker8 uses a clean, modular architecture:
+Chonker8 uses a clean, modular architecture (~5,000 lines of Rust):
 
 ```
 chonker8/
 ├── src/
-│   ├── main.rs              # Application entry point
-│   ├── core/               # Core functionality
-│   │   ├── config.rs       # Configuration management
-│   │   └── hot_reload.rs   # File watching and hot reload
-│   ├── display/            # UI components
-│   │   ├── terminal_ui.rs  # Main terminal interface
-│   │   ├── kitty_graphics.rs # Kitty terminal graphics
-│   │   └── file_browser.rs # File selection dialog
-│   └── pdf/                # PDF processing
-│       ├── render_with_pdftoppm.rs # PDF to image
-│       └── extract_text.rs # Text extraction with layout
-└── Cargo.toml
+│   ├── main.rs                     # Application entry point
+│   ├── main_hotreload.rs          # Hot-reload entry point
+│   ├── lib.rs                     # Library exports
+│   ├── core/                      # Core functionality
+│   │   ├── config.rs              # Configuration management
+│   │   └── hot_reload.rs          # File watching and auto-rebuild
+│   ├── display/                   # UI components
+│   │   ├── terminal_ui/           # Terminal interface
+│   │   │   ├── mod.rs             # UI module exports
+│   │   │   └── renderer.rs        # Main rendering engine
+│   │   ├── viewport.rs            # Viewport management
+│   │   ├── kitty_graphics.rs      # Kitty protocol implementation
+│   │   ├── kitty_helpers.rs       # Kitty utilities
+│   │   ├── file_browser.rs        # Fuzzy file picker
+│   │   ├── theme.rs               # Color themes
+│   │   └── mouse_zones.rs         # Mouse interaction zones
+│   ├── pdf/                       # PDF processing
+│   │   ├── render_with_pdftoppm.rs # PDF to image conversion
+│   │   ├── page_renderer.rs       # Page rendering coordination
+│   │   └── ocr.rs                 # OCR support for scanned PDFs
+│   └── storage/                   # Data storage
+│       ├── mod.rs                 # Storage exports
+│       └── excel_grid.rs          # Grid data structure
+├── lib/                           # PDFium libraries
+└── Cargo.toml                     # Dependencies
 ```
 
 ### Key Components
 
-- **PDF Rendering**: Uses system's `pdftoppm` for reliable PDF to image conversion
-- **Text Extraction**: Enhanced `pdftotext` with spatial layout preservation
+- **PDF Rendering**: Uses system's `pdftoppm` with timeout protection for large files
+- **Text Extraction**: `pdftotext` with automatic OCR fallback for scanned PDFs
+- **Viewport System**: Independent rendering regions prevent UI corruption
 - **Terminal UI**: Crossterm for cross-platform terminal manipulation
-- **Search Engine**: Nucleo for fuzzy text searching with highlighting
-- **File Browser**: Integrated file picker with fuzzy search
+- **Kitty Graphics**: Native image display in Kitty terminals
+- **File Browser**: Fuzzy file picker with Nucleo search
+- **Hot Reload**: Automatic rebuild on source changes (chonker8-hot)
 
 ## Version History
 
-### v8.8.0 (Current)
+### v8.9.0 (Current)
+- Added viewport abstraction to prevent UI corruption
+- Implemented timeout protection for large PDF files (700MB+)
+- Fixed pdftoppm output file detection (supports 4-digit padding)
+- Added OCR support with Tesseract for scanned PDFs
+- Improved error handling with debug output to `/tmp/chonker8_debug.txt`
+- Removed 1,177+ lines of dead code (ab_comparison modules, unused methods)
+- Fixed arrow key navigation in PDF viewer
+- Added hot-reload development mode (chonker8-hot)
+
+### v8.8.0
 - Complete removal of PDFium dependency
 - Enhanced text extraction with word grouping
 - Fuzzy search integration with Nucleo
