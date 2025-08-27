@@ -25,6 +25,7 @@ pub mod display {
     pub mod file_browser;
     pub mod theme;
     pub mod mouse_zones;
+    pub mod viewport;
 }
 
 // Storage

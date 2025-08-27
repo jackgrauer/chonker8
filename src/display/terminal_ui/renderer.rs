@@ -14,6 +14,7 @@ use crate::display::file_browser::IntegratedFilePicker;
 use crate::pdf::page_renderer as pdf_renderer;
 use crate::display::kitty_graphics::KittyProtocol;
 use crate::display::mouse_zones::{MouseHandler, MouseZone, PanelFocus, ScrollAction, ZoomAction};
+use crate::display::viewport::ViewportManager;
 // Use the Grid module from the same module
 use super::grid::Grid;
 
@@ -54,6 +55,8 @@ pub struct UIRenderer {
     mouse_handler: MouseHandler,  // Mouse zone detection and handling
     pdf_zoom: f32,  // PDF panel zoom level
     text_zoom: f32,  // Text editor zoom level
+    viewports: ViewportManager,  // Manage separate render regions
+    last_pdf_title: Option<String>,  // Cache the PDF title to avoid re-rendering
 }
 
 impl UIRenderer {
@@ -109,7 +112,7 @@ impl UIRenderer {
         }
         
         // Calculate actual available width for Excel grid based on terminal size
-        let (term_width, _) = terminal::size().unwrap_or((80, 24));
+        let (term_width, term_height) = terminal::size().unwrap_or((80, 24));
         let grid_width = (term_width / 2 - 4) as usize; // Half terminal minus borders
         
         Self {
@@ -142,6 +145,8 @@ impl UIRenderer {
             mouse_handler: MouseHandler::new(),
             pdf_zoom: 1.0,
             text_zoom: 1.0,
+            viewports: ViewportManager::new(term_width, term_height),
+            last_pdf_title: None,
         }
     }
     
@@ -151,6 +156,7 @@ impl UIRenderer {
     
     pub fn set_pdf_content(&mut self, content: Vec<Vec<char>>) {
         self.pdf_content = content;
+        self.viewports.text_viewport.mark_dirty();
     }
     
     pub fn set_total_pages(&mut self, total: usize) {
@@ -231,7 +237,7 @@ impl UIRenderer {
     }
     
     fn render_pdf_screen(&mut self) -> Result<()> {
-        // Chonker7-style split view: PDF image on left, text extraction on right
+        // Get terminal dimensions
         let (width, height) = terminal::size()?;
         let split_x = width / 2;
         
@@ -240,6 +246,7 @@ impl UIRenderer {
         
         // Check if window was resized
         if split_x != self.last_split_x {
+            self.viewports.resize(width, height);
             self.right_panel_dirty = true;
             self.image_sent = false;  // Re-render everything on resize
             self.first_render = true;  // Treat resize as a new render to clear artifacts
@@ -249,149 +256,154 @@ impl UIRenderer {
         // Hide cursor at the start to prevent flickering
         execute!(stdout(), crossterm::cursor::Hide)?;
         
-        // Only clear screen on first render or when image needs to be redrawn
-        // This prevents flickering while still clearing any text leakage
-        if self.first_render || !self.image_sent {
+        // Only clear screen on first render
+        if self.first_render {
             execute!(
                 stdout(),
                 Clear(ClearType::All),
                 MoveTo(0, 0)
             )?;
             self.first_render = false;
+            self.viewports.pdf_viewport.mark_dirty();
+            self.viewports.text_viewport.mark_dirty();
+            self.viewports.status_viewport.mark_dirty();
         }
         
-        // Draw a simple vertical split only on first render or if image not sent yet
-        if !self.image_sent {
-            execute!(stdout(), SetForegroundColor(Color::DarkGrey))?;
-            for y in 1..height - 1 {
-                execute!(stdout(), MoveTo(split_x, y), Print("|"))?;
-            }
-        }
+        // Clear dirty viewports before rendering
+        self.viewports.clear_dirty()?;
         
-        // Only redraw headers on first render or if image not sent yet
-        if !self.image_sent {
-            // Clear top line for headers
-            execute!(
-                stdout(),
-                MoveTo(0, 0),
-                Clear(ClearType::CurrentLine)
-            )?;
+        // Only draw separator and headers when they need updating
+        if self.viewports.headers_need_redraw() || !self.image_sent {
+            // Draw vertical separator
+            self.viewports.draw_separator()?;
             
-            // Panel titles with active indication
-            let pdf_color = self.mouse_handler.get_panel_highlight_color(PanelFocus::Pdf);
-            let text_color = self.mouse_handler.get_panel_highlight_color(PanelFocus::Text);
+            // Only update the header if the PDF title changed
+            let current_title = if let Some(ref path) = self.current_pdf_path {
+                Some(format!("PDF: {}", path.file_name().unwrap_or_default().to_string_lossy()))
+            } else {
+                Some("PDF DOCUMENT".to_string())
+            };
             
-            // PDF panel header
-            execute!(
-                stdout(),
-                MoveTo(2, 0),
-                SetForegroundColor(pdf_color),
-                Print(if self.mouse_handler.active_panel == PanelFocus::Pdf { 
-                    "● PDF DOCUMENT" 
-                } else { 
-                    "○ PDF DOCUMENT" 
-                }),
-                ResetColor
-            )?;
-            
-            // Text editor header
-            execute!(
-                stdout(),
-                MoveTo(split_x + 2, 0),
-                SetForegroundColor(text_color),
-                Print(if self.mouse_handler.active_panel == PanelFocus::Text { 
-                    "● TEXT EDITOR" 
-                } else { 
-                    "○ TEXT EDITOR" 
-                }),
-                ResetColor
-            )?;
-        }
-        
-        // Render PDF content or image - use FULL left panel
-        if self.current_pdf_image.is_some() {
-            // Use entire left panel for PDF
-            let pdf_panel_width = split_x;  // Full width including divider position
-            let pdf_panel_height = height - 2;  // Full height minus status bar
-            self.render_pdf_content(0, 1, pdf_panel_width, pdf_panel_height)?;
-        } else {
-            execute!(
-                stdout(),
-                MoveTo(2, 5),
-                SetForegroundColor(Color::Red),
-                Print("ERROR: No PDF image loaded"),
-                ResetColor
-            )?;
-        }
-        
-        // Right panel header is already drawn above with the border
-        
-        // Only clear the right panel on first render or resize
-        if !self.image_sent {
-            // Clear the right panel first time only
-            self.clear_region(split_x + 1, 1, width - split_x - 1, height - 2)?;
-            
-            // Show extraction method in a clean way
-            if let Some(method) = &self.extraction_method {
+            // Only redraw if title changed or first render
+            if self.last_pdf_title != current_title || !self.image_sent {
+                // Clear top line for headers
                 execute!(
                     stdout(),
-                    MoveTo(split_x + 2, 1),
+                    MoveTo(0, 0),
+                    Clear(ClearType::CurrentLine)
+                )?;
+                
+                // Panel titles with active indication
+                let pdf_color = self.mouse_handler.get_panel_highlight_color(PanelFocus::Pdf);
+                let text_color = self.mouse_handler.get_panel_highlight_color(PanelFocus::Text);
+                
+                // PDF panel header
+                execute!(
+                    stdout(),
+                    MoveTo(2, 0),
+                    SetForegroundColor(pdf_color),
+                    Print(if self.mouse_handler.active_panel == PanelFocus::Pdf { 
+                        "● " 
+                    } else { 
+                        "○ " 
+                    }),
+                    Print(&current_title.as_ref().unwrap()),
+                    ResetColor
+                )?;
+                
+                // Text editor header (only when focus changes)
+                execute!(
+                    stdout(),
+                    MoveTo(split_x + 2, 0),
+                    SetForegroundColor(text_color),
+                    Print(if self.mouse_handler.active_panel == PanelFocus::Text { 
+                        "● TEXT EDITOR" 
+                    } else { 
+                        "○ TEXT EDITOR" 
+                    }),
+                    ResetColor
+                )?;
+                
+                self.last_pdf_title = current_title;
+            }
+            
+            self.viewports.mark_headers_clean();
+        }
+        
+        // Render PDF content only if viewport is dirty
+        if self.viewports.pdf_viewport.is_dirty() || !self.image_sent {
+            if self.current_pdf_image.is_some() {
+                // Use viewport dimensions for PDF
+                let vp = &self.viewports.pdf_viewport;
+                self.render_pdf_content(vp.x, vp.y, vp.width, vp.height)?;
+            } else {
+                execute!(
+                    stdout(),
+                    MoveTo(2, 5),
+                    SetForegroundColor(Color::Red),
+                    Print("ERROR: No PDF image loaded"),
+                    ResetColor
+                )?;
+            }
+            self.viewports.pdf_viewport.mark_clean();
+        }
+        
+        // Render text content only if viewport is dirty
+        if self.viewports.text_viewport.is_dirty() || self.right_panel_dirty {
+            // Show extraction method in a clean way
+            if let Some(method) = &self.extraction_method {
+                let vp = &self.viewports.text_viewport;
+                execute!(
+                    stdout(),
+                    MoveTo(vp.x + 1, vp.y),
                     SetForegroundColor(Color::DarkGrey),
                     Print(format!("[{}]", method.to_uppercase())),
                     ResetColor
                 )?;
             }
+            
+            // Render text content using viewport dimensions
+            let vp = &self.viewports.text_viewport;
+            self.render_text_content(vp.x, vp.y + 1, vp.width, vp.height - 1)?;
+            
+            self.viewports.text_viewport.mark_clean();
+            self.right_panel_dirty = false;
         }
         
-        // Only clear and redraw the text panel if it's dirty
-        if self.right_panel_dirty {
-            // Clear just the right panel area to prevent text artifacts
-            for y in 1..height - 1 {
-                execute!(
-                    stdout(),
-                    MoveTo(split_x + 1, y),
-                    Clear(ClearType::UntilNewLine)
-                )?;
-            }
+        // Render status bar only if viewport is dirty
+        if self.viewports.status_viewport.is_dirty() {
+            let status_parts: Vec<String> = vec![
+                // File info or default text
+                self.current_pdf_path.as_ref().map(|path| 
+                    format!("File: {} │ Page {}/{}", 
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        self.current_page, 
+                        self.total_pages)
+                ).unwrap_or_else(|| "PDF - TEST Screen".to_string()),
+                
+                // Excel grid status or shortcuts
+                self.grid.get_status_message()
+                    .map(|msg| msg.to_string())
+                    .unwrap_or_else(|| "F1:Help Ctrl-F:Find Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste".to_string()),
+                
+                // Navigation help
+                "TAB:Switch ESC:Exit".to_string(),
+            ];
+            
+            let status_text = status_parts.join(" │ ");
+            
+            let vp = &self.viewports.status_viewport;
+            execute!(
+                stdout(),
+                MoveTo(vp.x, vp.y),
+                SetBackgroundColor(Color::DarkBlue),
+                SetForegroundColor(Color::White),
+                Print(format!(" {:<width$} ", status_text, width = vp.width as usize - 2)),
+                ResetColor
+            )?;
+            
+            self.viewports.status_viewport.mark_clean();
         }
-        
-        // Always render text content - it will handle incremental updates
-        self.render_text_content(split_x + 1, 2, width - split_x, height - 4)?;
-        
-        self.right_panel_dirty = false;
-        
-        // Status bar with Excel grid status - functional approach
-        let status_parts: Vec<String> = vec![
-            // File info or default text
-            self.current_pdf_path.as_ref().map(|path| 
-                format!("File: {} │ Page {}/{}", 
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    self.current_page, 
-                    self.total_pages)
-            ).unwrap_or_else(|| "PDF - TEST Screen".to_string()),
-            
-            // Excel grid status or shortcuts
-            self.grid.get_status_message()
-                .map(|msg| msg.to_string())
-                .unwrap_or_else(|| "F1:Help Ctrl-F:Find Ctrl-C:Copy Ctrl-X:Cut Ctrl-V:Paste".to_string()),
-            
-            // Navigation help
-            "TAB:Switch ESC:Exit".to_string(),
-        ];
-        
-        let status_text = status_parts.join(" │ ");
-        
-        // No bottom border needed
-        
-        // Status bar
-        execute!(
-            stdout(),
-            MoveTo(0, height - 1),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(format!(" {:<width$} ", status_text, width = width as usize - 2)),
-            ResetColor
-        )?;
         
         // Position cursor in the right panel at the Excel grid cursor position
         // Account for line numbers (5 chars) if enabled
@@ -1132,6 +1144,8 @@ impl UIRenderer {
         }
         self.scroll_offset = 0;
         self.image_sent = false; // Reset flag so new page image is sent
+        self.viewports.pdf_viewport.mark_dirty();
+        self.viewports.status_viewport.mark_dirty();
     }
     
     pub fn prev_page(&mut self) {
@@ -1139,6 +1153,8 @@ impl UIRenderer {
             self.current_page -= 1;
             self.scroll_offset = 0;
             self.image_sent = false; // Reset flag so new page image is sent
+            self.viewports.pdf_viewport.mark_dirty();
+            self.viewports.status_viewport.mark_dirty();
         }
     }
     
@@ -1319,11 +1335,13 @@ impl UIRenderer {
                             ZoomAction::PdfZoom(level) => {
                                 self.pdf_zoom = level;
                                 self.image_sent = false; // Re-render PDF at new zoom
+                                self.viewports.pdf_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
                             ZoomAction::TextZoom(level) => {
                                 self.text_zoom = level;
                                 self.right_panel_dirty = true;
+                                self.viewports.text_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
                             _ => {}
@@ -1338,12 +1356,14 @@ impl UIRenderer {
                             ScrollAction::PdfScroll(_x, y) => {
                                 // Update PDF scroll offset
                                 self.scroll_offset = (y as usize).min(100); // Clamp to reasonable range
+                                self.viewports.pdf_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
                             ScrollAction::TextScroll(_x, y) => {
                                 // Update text scroll offset
                                 self.grid.scroll_y = y;
                                 self.right_panel_dirty = true;
+                                self.viewports.text_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
                             _ => {}
@@ -1359,6 +1379,7 @@ impl UIRenderer {
                         ScrollAction::TextScroll(x, _y) => {
                             self.grid.scroll_x = x;
                             self.right_panel_dirty = true;
+                            self.viewports.text_viewport.mark_dirty();
                             needs_redraw = true;
                         }
                         _ => {}
@@ -1373,6 +1394,7 @@ impl UIRenderer {
                     MouseZone::TextEditor => {
                         // Pass to existing grid handler
                         self.handle_mouse_for_grid(event);
+                        self.viewports.text_viewport.mark_dirty();
                         needs_redraw = true;
                     }
                     MouseZone::PdfPanel => {
@@ -1473,6 +1495,11 @@ impl UIRenderer {
         self.image_sent = false; // Reset flag for new PDF
         self.right_panel_dirty = true; // Mark right panel for redraw with new content
         
+        // Mark all viewports as dirty for new PDF
+        self.viewports.pdf_viewport.mark_dirty();
+        self.viewports.text_viewport.mark_dirty();
+        self.viewports.status_viewport.mark_dirty();
+        
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
         // eprintln!("[INFO] Left pane: lopdf-kitty rendering");
         // eprintln!("[INFO] Right pane: pdftotext extraction");
@@ -1568,7 +1595,7 @@ impl UIRenderer {
         let text_matrix = self.text_to_matrix(&text_with_metadata, 200, 100);
         
         // Calculate actual available width for Excel grid based on terminal size
-        let (term_width, _) = terminal::size().unwrap_or((80, 24));
+        let (term_width, term_height) = terminal::size().unwrap_or((80, 24));
         let grid_width = (term_width / 2 - 4) as usize; // Half terminal minus borders
         
         // Update Excel grid with the extracted text
