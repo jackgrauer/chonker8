@@ -19,8 +19,6 @@ pub mod pdf {
 pub mod display {
     pub mod kitty_graphics;
     pub mod kitty_helpers;
-    pub mod ab_comparison_ui;
-    pub mod ab_comparison_excel;
     pub mod terminal_ui;
     pub mod file_browser;
     pub mod theme;
@@ -34,7 +32,6 @@ pub mod storage;
 // Legacy compatibility exports (to avoid breaking everything at once)
 pub use display::kitty_graphics as kitty_protocol;
 pub use display::kitty_helpers as kitty_simple;
-pub use display::ab_comparison_ui as enhanced_ab_ui;
 pub use display::file_browser as integrated_file_picker;
 pub use pdf::render_with_pdftoppm as system_pdf_renderer;
 pub use pdf::page_renderer as pdf_renderer;

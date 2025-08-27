@@ -57,6 +57,8 @@ pub struct UIRenderer {
 
 impl UIRenderer {
     // Terminal drawing helper methods
+    // Unused method - was for old UI
+    #[allow(dead_code)]
     fn draw_header(&self, x: u16, y: u16, text: &str) -> Result<()> {
         execute!(
             stdout(),
@@ -88,7 +90,6 @@ impl UIRenderer {
         let file_picker = match IntegratedFilePicker::new() {
             Ok(picker) => Some(picker),
             Err(e) => {
-                // Silenced: eprintln!("Warning: Failed to initialize file picker: {}", e);
                 None
             }
         };
@@ -97,14 +98,10 @@ impl UIRenderer {
         
         // FORCE ENABLE KITTY FOR TESTING
         kitty.force_enable();
-        // eprintln!("[KITTY] *** FORCE-ENABLED KITTY PROTOCOL FOR TESTING ***");
         
         // Kitty is MANDATORY for this viewer
         if kitty.is_supported() {
-            // eprintln!("[DEBUG] Kitty graphics protocol ACTIVE");
         } else {
-            // Silenced: eprintln!("[WARNING] Kitty not detected - PDF images require Kitty terminal");
-            // Silenced: eprintln!("[WARNING] Run with: kitty ./target/release/chonker8-hot [pdf]");
         }
         
         // Calculate actual available width for Excel grid based on terminal size
@@ -381,115 +378,9 @@ impl UIRenderer {
         Ok(())
     }
     
-    /*
-    // Debug screen removed - not needed
-        // Clear screen
-        execute!(
-            stdout(),
-            Clear(ClearType::All),
-            MoveTo(0, 0)
-        )?;
-        
-        // Draw header
-        execute!(
-            stdout(),
-            MoveTo(0, 0),
-            SetForegroundColor(Color::Cyan),
-            Print(format!("╔{}╗", "═".repeat((width - 2) as usize))),
-            MoveTo(0, 1),
-            Print("║"),
-            MoveTo(2, 1),
-            SetForegroundColor(Color::Yellow),
-            Print("DEBUG OUTPUT"),
-            SetForegroundColor(Color::Cyan),
-            MoveTo(width - 1, 1),
-            Print("║"),
-            MoveTo(0, 2),
-            Print(format!("╠{}╣", "═".repeat((width - 2) as usize))),
-            ResetColor
-        )?;
-        
-        // Calculate content area
-        let content_start_y = 3;
-        let content_height = height.saturating_sub(5); // Leave room for header and status
-        
-        // Display debug messages
-        let visible_messages = self.debug_messages
-            .iter()
-            .skip(self.debug_scroll_offset)
-            .take(content_height as usize);
-        
-        for (i, message) in visible_messages.enumerate() {
-            let y_pos = content_start_y + i as u16;
-            
-            // Truncate message to fit screen width
-            let max_width = (width - 4) as usize;
-            let display_msg = if message.len() > max_width {
-                format!("{}...", &message.chars().take(max_width - 3).collect::<String>())
-            } else {
-                message.clone()
-            };
-            
-            // Get appropriate color for this message
-            let msg_color = self.get_message_color(&message);
-            
-            execute!(
-                stdout(),
-                MoveTo(0, y_pos),
-                SetForegroundColor(Color::Cyan),
-                Print("║ "),
-                SetForegroundColor(msg_color),
-                Print(format!("{:<width$}", display_msg, width = max_width)),
-                SetForegroundColor(Color::Cyan),
-                MoveTo(width - 1, y_pos),
-                Print("║"),
-                ResetColor
-            )?;
-        }
-        
-        // Fill empty lines
-        for i in self.debug_messages.len()..content_height as usize {
-            let y_pos = content_start_y + i as u16;
-            execute!(
-                stdout(),
-                MoveTo(0, y_pos),
-                SetForegroundColor(Color::Cyan),
-                Print("║"),
-                MoveTo(width - 1, y_pos),
-                Print("║"),
-                ResetColor
-            )?;
-        }
-        
-        // Draw bottom border
-        execute!(
-            stdout(),
-            MoveTo(0, height - 2),
-            SetForegroundColor(Color::Cyan),
-            Print(format!("╚{}╝", "═".repeat((width - 2) as usize))),
-            ResetColor
-        )?;
-        
-        // Status bar
-        let status_text = format!(
-            " Msgs: {} | {}-{} | ↑↓/Mouse: Scroll | PgUp/Dn | Home/End | Tab | Esc ",
-            self.debug_messages.len(),
-            self.debug_scroll_offset + 1,
-            (self.debug_scroll_offset + content_height as usize).min(self.debug_messages.len())
-        );
-        
-        execute!(
-            stdout(),
-            MoveTo(0, height - 1),
-            SetAttributes(Attributes::from(Attribute::Reverse)),
-            Print(format!("{:<width$}", status_text, width = width as usize)),
-            SetAttributes(Attributes::from(Attribute::Reset))
-        )?;
-        
-        stdout().flush()?;
-        Ok(())
-    */
     
+    // Unused - only called from removed ab_comparison modules
+    #[allow(dead_code)]
     fn render_pdf_panel(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
         
@@ -540,6 +431,8 @@ impl UIRenderer {
         Ok(())
     }
     
+    // Unused - only called from removed ab_comparison modules
+    #[allow(dead_code)]
     fn render_text_panel(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         let (tl, tr, bl, br, h_line, v_line, _, _) = self.config.get_border_chars();
         
@@ -1465,19 +1358,14 @@ impl UIRenderer {
         self.extraction_method = None;
         
         let msg = format!("A-B Comparison: Loading PDF {:?}", pdf_path);
-        // eprintln!("[INFO] Left pane: lopdf-kitty rendering");
-        // eprintln!("[INFO] Right pane: pdftotext extraction");
         self.add_debug_message(msg.clone());
-        // eprintln!("[DEBUG] {}", msg);
         
         // Load PDF page count - chonker7 style with fresh instance
         self.add_debug_message("Getting page count...".to_string());
-        // eprintln!("[DEBUG] Getting page count...");
         self.total_pages = pdf_renderer::get_pdf_page_count(&pdf_path)?;
         self.current_page = 1;
         let msg = format!("Page count: {}", self.total_pages);
         self.add_debug_message(msg.clone());
-        // eprintln!("[DEBUG] {}", msg);
         
         // Render first page image - same size as chonker7
         self.add_debug_message("Rendering PDF with lopdf-kitty...".to_string());
@@ -1491,7 +1379,6 @@ impl UIRenderer {
         
         // Extract text using pdftotext for the right panel
         self.add_debug_message("Extracting text with pdftotext...".to_string());
-        // eprintln!("[DEBUG] Running pdftotext with layout preservation...");
         
         let mut extraction_result = match std::process::Command::new("pdftotext")
             .args(&[
@@ -1506,11 +1393,9 @@ impl UIRenderer {
             .output() {
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).to_string();
-                // eprintln!("[DEBUG] pdftotext extracted {} characters", text.len());
                 text
             }
             _ => {
-                // eprintln!("[WARNING] pdftotext failed, using fallback");
                 "".to_string() // Empty string to trigger OCR check
             }
         };
@@ -1518,7 +1403,6 @@ impl UIRenderer {
         // Check if we need OCR (scanned PDF with no text layer)
         use crate::pdf::ocr;
         if ocr::needs_ocr(&extraction_result) {
-            // eprintln!("[INFO] PDF appears to be scanned, attempting OCR...");
             self.add_debug_message("No text layer detected, attempting OCR...".to_string());
             
             // Mark viewports dirty when switching to OCR mode
@@ -1529,12 +1413,10 @@ impl UIRenderer {
             if let Some(ref image) = self.current_pdf_image {
                 match ocr::ocr_image(image) {
                     Ok(ocr_text) => {
-                        // eprintln!("[DEBUG] OCR extracted {} characters", ocr_text.len());
                         extraction_result = ocr_text;
                         self.extraction_method = Some("OCR (Tesseract)".to_string());
                     }
                     Err(e) => {
-                        // eprintln!("[ERROR] OCR failed: {}", e);
                         self.add_debug_message(format!("OCR failed: {}", e));
                         extraction_result = format!("OCR failed: {}\n\nThis PDF appears to be scanned and requires OCR.", e);
                         self.extraction_method = Some("Failed OCR".to_string());
@@ -1556,7 +1438,6 @@ impl UIRenderer {
         
         let msg = format!("Extraction complete using {}", self.extraction_method.as_ref().unwrap_or(&"unknown".to_string()));
         self.add_debug_message(msg.clone());
-        // eprintln!("[DEBUG] {}", msg);
         
         // Store metadata
         self.extraction_quality = Some(0.8);
