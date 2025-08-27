@@ -277,15 +277,8 @@ impl UIRenderer {
             // Draw vertical separator
             self.viewports.draw_separator()?;
             
-            // Only update the header if the PDF title changed
-            let current_title = if let Some(ref path) = self.current_pdf_path {
-                Some(format!("PDF: {}", path.file_name().unwrap_or_default().to_string_lossy()))
-            } else {
-                Some("PDF DOCUMENT".to_string())
-            };
-            
-            // Only redraw if title changed or first render
-            if self.last_pdf_title != current_title || !self.image_sent {
+            // Only redraw headers on first render or resize
+            if !self.image_sent {
                 // Clear top line for headers
                 execute!(
                     stdout(),
@@ -307,7 +300,7 @@ impl UIRenderer {
                     } else { 
                         "○ " 
                     }),
-                    Print(&current_title.as_ref().unwrap()),
+                    Print("PDF"),
                     ResetColor
                 )?;
                 
@@ -323,8 +316,6 @@ impl UIRenderer {
                     }),
                     ResetColor
                 )?;
-                
-                self.last_pdf_title = current_title;
             }
             
             self.viewports.mark_headers_clean();
@@ -350,18 +341,6 @@ impl UIRenderer {
         
         // Render text content only if viewport is dirty
         if self.viewports.text_viewport.is_dirty() || self.right_panel_dirty {
-            // Show extraction method in a clean way
-            if let Some(method) = &self.extraction_method {
-                let vp = &self.viewports.text_viewport;
-                execute!(
-                    stdout(),
-                    MoveTo(vp.x + 1, vp.y),
-                    SetForegroundColor(Color::DarkGrey),
-                    Print(format!("[{}]", method.to_uppercase())),
-                    ResetColor
-                )?;
-            }
-            
             // Render text content using viewport dimensions
             let vp = &self.viewports.text_viewport;
             self.render_text_content(vp.x, vp.y + 1, vp.width, vp.height - 1)?;
@@ -373,13 +352,8 @@ impl UIRenderer {
         // Render status bar only if viewport is dirty
         if self.viewports.status_viewport.is_dirty() {
             let status_parts: Vec<String> = vec![
-                // File info or default text
-                self.current_pdf_path.as_ref().map(|path| 
-                    format!("File: {} │ Page {}/{}", 
-                        path.file_name().unwrap_or_default().to_string_lossy(),
-                        self.current_page, 
-                        self.total_pages)
-                ).unwrap_or_else(|| "PDF - TEST Screen".to_string()),
+                // Page info
+                format!("Page {}/{}", self.current_page, self.total_pages),
                 
                 // Excel grid status or shortcuts
                 self.grid.get_status_message()
