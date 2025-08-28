@@ -7,6 +7,9 @@ use std::cmp::{min, max};
 use std::sync::{Arc, Mutex};
 use nucleo::{Nucleo, Config as NucleoConfig};
 
+// Threshold for recommending rope backend (characters) 
+pub const ROPE_THRESHOLD: usize = 100_000;
+
 pub struct Grid {
     pub cells: Vec<Vec<char>>,
     pub cursor: (usize, usize),  // (col, row)
@@ -78,6 +81,11 @@ pub enum SelectionMode {
 }
 
 impl Grid {
+    /// Check if text is large enough to benefit from rope backend
+    pub fn should_use_rope(text: &str) -> bool {
+        text.len() > ROPE_THRESHOLD
+    }
+
     pub fn new(width: usize, height: usize) -> Self {
         let cells = vec![vec![' '; width]; height];
         let clipboard = Clipboard::new().ok().map(|c| Arc::new(Mutex::new(c)));
