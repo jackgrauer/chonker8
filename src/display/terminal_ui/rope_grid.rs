@@ -58,8 +58,6 @@ pub struct RopeGrid {
     // Revision tracking and dirty regions
     revision: u64,  // Increments on each change
     dirty_regions: Vec<DirtyRegion>,  // Regions modified since last render
-    cached_view: Option<Vec<Vec<char>>>,  // Cached rendered view
-    cached_revision: u64,  // Revision of cached view
 }
 
 impl RopeGrid {
@@ -89,8 +87,6 @@ impl RopeGrid {
             cached_width: width,
             revision: 0,
             dirty_regions: Vec::new(),
-            cached_view: None,
-            cached_revision: 0,
         }
     }
 
@@ -125,8 +121,6 @@ impl RopeGrid {
             cached_width: max_width,
             revision: 0,
             dirty_regions: Vec::new(),
-            cached_view: None,
-            cached_revision: 0,
         }
     }
 
@@ -364,58 +358,6 @@ impl RopeGrid {
         self.rope.to_string()
     }
 
-    /// Get the entire grid as a 2D vector (for rendering compatibility)
-    pub fn as_2d_vec(&self, viewport_width: usize, viewport_height: usize, offset_x: usize, offset_y: usize) -> Vec<Vec<char>> {
-        let mut result = Vec::new();
-        
-        for row in 0..viewport_height {
-            let actual_row = row + offset_y;
-            let mut line_chars = Vec::new();
-            
-            for col in 0..viewport_width {
-                let actual_col = col + offset_x;
-                line_chars.push(self.get_char(actual_col, actual_row));
-            }
-            
-            result.push(line_chars);
-        }
-        
-        result
-    }
-    
-    /// Get cached view or generate new one if revision changed
-    pub fn get_cached_view(&mut self, viewport_width: usize, viewport_height: usize, offset_x: usize, offset_y: usize) -> Vec<Vec<char>> {
-        // Check if we need to regenerate the cache
-        let need_full_refresh = self.cached_view.is_none() || 
-                               self.cached_revision != self.revision ||
-                               self.cached_view.as_ref().map_or(true, |v| v.len() != viewport_height || v.get(0).map_or(true, |r| r.len() != viewport_width));
-        
-        if need_full_refresh {
-            // Generate fresh view
-            self.cached_view = Some(self.as_2d_vec(viewport_width, viewport_height, offset_x, offset_y));
-            self.cached_revision = self.revision;
-            self.mark_all_dirty();
-        } else {
-            // Update only dirty regions
-            let dirty_regions = self.dirty_regions.clone();
-            for region in &dirty_regions {
-                for row in region.y..region.y.min(region.y + region.height).min(viewport_height) {
-                    for col in region.x..region.x.min(region.x + region.width).min(viewport_width) {
-                        let actual_row = row + offset_y;
-                        let actual_col = col + offset_x;
-                        let ch = self.get_char(actual_col, actual_row);
-                        if let Some(cached) = &mut self.cached_view {
-                            cached[row][col] = ch;
-                        }
-                    }
-                }
-            }
-        }
-        
-        self.cached_view.clone().unwrap_or_else(|| {
-            self.as_2d_vec(viewport_width, viewport_height, offset_x, offset_y)
-        })
-    }
 
     /// Ensure cursor is visible in viewport
     pub fn ensure_cursor_visible(&mut self, viewport_width: usize, viewport_height: usize) {

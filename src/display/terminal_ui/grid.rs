@@ -60,9 +60,9 @@ impl Grid {
         }
     }
     
-    // Public field accessors for backward compatibility
-    pub fn cells(&self) -> Vec<Vec<char>> {
-        self.rope_grid.as_2d_vec(self.rope_grid.width(), self.rope_grid.height(), 0, 0)
+    // Get a single character at position without generating entire grid
+    pub fn get_char(&self, x: usize, y: usize) -> char {
+        self.rope_grid.get_char(x, y)
     }
     
     pub fn cursor(&self) -> (usize, usize) { self.rope_grid.cursor }
@@ -191,12 +191,6 @@ impl Grid {
     pub fn paste_text(&mut self, text: &str) {
         self.rope_grid.paste_text(text);
     }
-    
-    // Incremental rendering support
-    pub fn get_cached_view(&mut self, viewport_width: usize, viewport_height: usize, offset_x: usize, offset_y: usize) -> Vec<Vec<char>> {
-        self.rope_grid.get_cached_view(viewport_width, viewport_height, offset_x, offset_y)
-    }
-    
     pub fn get_dirty_regions(&self) -> &[DirtyRegion] {
         self.rope_grid.get_dirty_regions()
     }

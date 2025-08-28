@@ -591,13 +591,13 @@ impl UIRenderer {
         
         // Render the Excel grid with block selection and scrolling
         let visible_rows = height / row_height;
-        let grid_cells = self.grid.cells();
-        for display_row in 0..visible_rows.min(grid_cells.len().saturating_sub(scroll_y) as u16) {
+        // Direct rope access - no intermediate array generation
+        for display_row in 0..visible_rows.min(self.grid.height().saturating_sub(scroll_y) as u16) {
             let grid_row = (display_row + scroll_y as u16) as usize;
             let screen_y = y + (display_row * row_height);
             
             // Skip if row is out of bounds
-            if grid_row >= grid_cells.len() || screen_y >= y + height {
+            if grid_row >= self.grid.height() || screen_y >= y + height {
                 break;
             }
             
@@ -622,11 +622,7 @@ impl UIRenderer {
                 for display_col in 0..text_width.min(self.grid.width() as u16) {
                     let grid_col = (display_col as usize) + scroll_x;
                     
-                    let ch = if grid_row < grid_cells.len() && grid_col < grid_cells[grid_row].len() {
-                        grid_cells[grid_row][grid_col]
-                    } else {
-                        ' '
-                    };
+                    let ch = self.grid.get_char(grid_col, grid_row);
                     
                     row_output.push(ch);
                     
@@ -648,7 +644,7 @@ impl UIRenderer {
                 // grid_row already defined above
                 
                 // First, highlight any selected cells in this row
-                let grid_cells_sel = self.grid.cells();
+                // Direct rope access for selection
                 if self.grid.selecting() {
                     let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     if grid_row >= y1 && grid_row <= y2 {
@@ -662,11 +658,7 @@ impl UIRenderer {
                                     SetForegroundColor(Color::White),
                                 )?;
                                 
-                                let ch = if grid_row < grid_cells_sel.len() && col < grid_cells_sel[grid_row].len() {
-                                    grid_cells_sel[grid_row][col]
-                                } else {
-                                    ' '
-                                };
+                                let ch = self.grid.get_char(col, grid_row);
                                 
                                 execute!(stdout(), Print(ch), ResetColor)?;
                             }
@@ -675,7 +667,7 @@ impl UIRenderer {
                 }
                 
                 // Highlight search results
-                let grid_cells_search = self.grid.cells();
+                // Direct rope access for search
                 if self.grid.searching() && !self.grid.search_query().is_empty() {
                     for display_col in 0..text_width as usize {
                         let grid_col = display_col + scroll_x;
@@ -687,11 +679,7 @@ impl UIRenderer {
                                 SetForegroundColor(Color::Black),
                             )?;
                             
-                            let ch = if grid_row < grid_cells_search.len() && grid_col < grid_cells_search[grid_row].len() {
-                                grid_cells_search[grid_row][grid_col]
-                            } else {
-                                ' '
-                            };
+                            let ch = self.grid.get_char(grid_col, grid_row);
                             
                             execute!(stdout(), Print(ch), ResetColor)?;
                         }
@@ -700,7 +688,7 @@ impl UIRenderer {
                 
                 // Then highlight the cursor (overwrites selection if at same position)
                 // ONLY render cursor if it's within the visible viewport
-                let grid_cells_cursor = self.grid.cells();
+                // Direct rope access for cursor
                 let cursor = self.grid.cursor();
                 if grid_row == cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
                     let cursor_col = cursor.0;
@@ -714,11 +702,7 @@ impl UIRenderer {
                             SetForegroundColor(Color::White),
                         )?;
                         
-                        let ch = if grid_row < grid_cells_cursor.len() && cursor_col < grid_cells_cursor[grid_row].len() {
-                            grid_cells_cursor[grid_row][cursor_col]
-                        } else {
-                            ' '
-                        };
+                        let ch = self.grid.get_char(cursor_col, grid_row);
                         
                         execute!(stdout(), Print(ch), ResetColor)?;
                     }
@@ -728,11 +712,7 @@ impl UIRenderer {
                 for display_col in 0..width.min(self.grid.width() as u16) {
                     let grid_col = (display_col as usize) + scroll_x;
                     
-                    let ch = if grid_row < grid_cells.len() && grid_col < grid_cells[grid_row].len() {
-                        grid_cells[grid_row][grid_col]
-                    } else {
-                        ' '
-                    };
+                    let ch = self.grid.get_char(grid_col, grid_row);
                     
                     row_output.push(ch);
                 }
@@ -749,7 +729,7 @@ impl UIRenderer {
                 // grid_row already defined above
                 
                 // First, highlight any selected cells in this row
-                let grid_cells_sel = self.grid.cells();
+                // Direct rope access for selection
                 if self.grid.selecting() {
                     let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     if grid_row >= y1 && grid_row <= y2 {
@@ -763,11 +743,7 @@ impl UIRenderer {
                                     SetForegroundColor(Color::White),
                                 )?;
                                 
-                                let ch = if grid_row < grid_cells_sel.len() && col < grid_cells_sel[grid_row].len() {
-                                    grid_cells_sel[grid_row][col]
-                                } else {
-                                    ' '
-                                };
+                                let ch = self.grid.get_char(col, grid_row);
                                 
                                 execute!(stdout(), Print(ch), ResetColor)?;
                             }
@@ -777,7 +753,7 @@ impl UIRenderer {
                 
                 // Then highlight the cursor
                 // ONLY render cursor if it's within the visible viewport
-                let grid_cells_cursor = self.grid.cells();
+                // Direct rope access for cursor
                 let cursor = self.grid.cursor();
                 if grid_row == cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
                     let cursor_col = cursor.0;
@@ -792,11 +768,7 @@ impl UIRenderer {
                                 SetForegroundColor(Color::White),
                             )?;
                             
-                            let ch = if grid_row < grid_cells_cursor.len() && cursor_col < grid_cells_cursor[grid_row].len() {
-                                grid_cells_cursor[grid_row][cursor_col]
-                            } else {
-                                ' '
-                            };
+                            let ch = self.grid.get_char(cursor_col, grid_row);
                             
                             execute!(stdout(), Print(ch), ResetColor)?;
                         }
