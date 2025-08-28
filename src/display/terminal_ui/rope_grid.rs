@@ -196,7 +196,14 @@ impl RopeGrid {
         }
 
         let line = self.rope.line(row);
-        if col >= line.len_chars() {
+        // Note: line.len_chars() includes the newline, so we need to handle that
+        let line_len = if line.len_chars() > 0 && line.char(line.len_chars() - 1) == '\n' {
+            line.len_chars() - 1
+        } else {
+            line.len_chars()
+        };
+        
+        if col >= line_len {
             return ' ';
         }
 
@@ -301,17 +308,22 @@ impl RopeGrid {
         
         self.rope.insert(char_pos, text);
         
-        // Update cursor position
-        let inserted_lines = text.matches('\n').count();
+        // Update cursor position more accurately
+        let text_lines: Vec<&str> = text.split('\n').collect();
+        let inserted_lines = text_lines.len() - 1;
+        
         if inserted_lines > 0 {
-            // Mark all affected lines as dirty
+            // Text contains newlines
             self.mark_dirty(0, old_cursor.1, self.width(), inserted_lines + 1);
             
             self.cursor.1 += inserted_lines;
-            let last_line_len = text.split('\n').last().unwrap_or("").len();
-            self.cursor.0 = last_line_len;
+            // Cursor goes to position after last inserted character
+            let last_line = text_lines.last().unwrap_or(&"");
+            // If we inserted at middle of a line, cursor is at the inserted text position
+            // If original line had text after cursor, that's now on the new line too
+            self.cursor.0 = last_line.len();
         } else {
-            // Mark only the current line from cursor to end as dirty
+            // Single line insertion
             self.mark_dirty(old_cursor.0, old_cursor.1, text.len() + 10, 1);
             self.cursor.0 += text.len();
         }
@@ -472,10 +484,16 @@ impl RopeGrid {
                     self.cursor.0 -= 1;
                     self.delete_char();
                 } else if self.cursor.1 > 0 {
-                    // Move to end of previous line
+                    // Move to end of previous line (excluding newline)
                     self.cursor.1 -= 1;
                     let line = self.rope.line(self.cursor.1);
-                    self.cursor.0 = line.len_chars().saturating_sub(1);
+                    let line_len = if line.len_chars() > 0 && line.char(line.len_chars() - 1) == '\n' {
+                        line.len_chars() - 1
+                    } else {
+                        line.len_chars()
+                    };
+                    self.cursor.0 = line_len;
+                    // Now delete the newline that was at the end of this line
                     self.delete_char();
                 }
             }
@@ -525,9 +543,13 @@ impl RopeGrid {
                 if self.cursor.1 > 0 {
                     let old_cursor = self.cursor;
                     self.cursor.1 -= 1;
-                    // Clamp cursor to line length
+                    // Clamp cursor to line length (excluding newline)
                     let line = self.rope.line(self.cursor.1);
-                    let line_len = line.len_chars();
+                    let line_len = if line.len_chars() > 0 && line.char(line.len_chars() - 1) == '\n' {
+                        line.len_chars() - 1
+                    } else {
+                        line.len_chars()
+                    };
                     if self.cursor.0 > line_len {
                         self.cursor.0 = line_len;
                     }
@@ -540,9 +562,13 @@ impl RopeGrid {
                 if self.cursor.1 < self.height() - 1 {
                     let old_cursor = self.cursor;
                     self.cursor.1 += 1;
-                    // Clamp cursor to line length
+                    // Clamp cursor to line length (excluding newline)
                     let line = self.rope.line(self.cursor.1);
-                    let line_len = line.len_chars();
+                    let line_len = if line.len_chars() > 0 && line.char(line.len_chars() - 1) == '\n' {
+                        line.len_chars() - 1
+                    } else {
+                        line.len_chars()
+                    };
                     if self.cursor.0 > line_len {
                         self.cursor.0 = line_len;
                     }
@@ -556,7 +582,13 @@ impl RopeGrid {
             }
             KeyCode::End => {
                 let line = self.rope.line(self.cursor.1);
-                self.cursor.0 = line.len_chars().saturating_sub(1);
+                // Go to end of actual text, not including newline
+                let line_len = if line.len_chars() > 0 && line.char(line.len_chars() - 1) == '\n' {
+                    line.len_chars() - 1
+                } else {
+                    line.len_chars()
+                };
+                self.cursor.0 = line_len;
             }
             KeyCode::PageUp => {
                 self.cursor.1 = self.cursor.1.saturating_sub(10);
