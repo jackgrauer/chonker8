@@ -577,8 +577,8 @@ impl UIRenderer {
     
     fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // Apply scrolling offsets to the grid rendering
-        let scroll_y = self.grid.scroll_y;
-        let scroll_x = self.grid.scroll_x;
+        let scroll_y = self.grid.scroll_y();
+        let scroll_x = self.grid.scroll_x();
         
         // Apply text zoom (affects font size conceptually, but we'll use it for spacing)
         let zoom = self.text_zoom;
@@ -586,12 +586,13 @@ impl UIRenderer {
         
         // Render the Excel grid with block selection and scrolling
         let visible_rows = height / row_height;
-        for display_row in 0..visible_rows.min(self.grid.cells.len().saturating_sub(scroll_y) as u16) {
+        let grid_cells = self.grid.cells();
+        for display_row in 0..visible_rows.min(grid_cells.len().saturating_sub(scroll_y) as u16) {
             let grid_row = (display_row + scroll_y as u16) as usize;
             let screen_y = y + (display_row * row_height);
             
             // Skip if row is out of bounds
-            if grid_row >= self.grid.cells.len() || screen_y >= y + height {
+            if grid_row >= grid_cells.len() || screen_y >= y + height {
                 break;
             }
             
@@ -613,11 +614,11 @@ impl UIRenderer {
                 let text_width = width.saturating_sub(text_start);
                 
                 // Build the row string with horizontal scrolling
-                for display_col in 0..text_width.min(self.grid.width as u16) {
+                for display_col in 0..text_width.min(self.grid.width() as u16) {
                     let grid_col = (display_col as usize) + scroll_x;
                     
-                    let ch = if grid_row < self.grid.cells.len() && grid_col < self.grid.cells[grid_row].len() {
-                        self.grid.cells[grid_row][grid_col]
+                    let ch = if grid_row < grid_cells.len() && grid_col < grid_cells[grid_row].len() {
+                        grid_cells[grid_row][grid_col]
                     } else {
                         ' '
                     };
@@ -642,7 +643,8 @@ impl UIRenderer {
                 // grid_row already defined above
                 
                 // First, highlight any selected cells in this row
-                if self.grid.selecting {
+                let grid_cells_sel = self.grid.cells();
+                if self.grid.selecting() {
                     let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     if grid_row >= y1 && grid_row <= y2 {
                         // This row has selected cells
@@ -655,8 +657,8 @@ impl UIRenderer {
                                     SetForegroundColor(Color::White),
                                 )?;
                                 
-                                let ch = if grid_row < self.grid.cells.len() && col < self.grid.cells[grid_row].len() {
-                                    self.grid.cells[grid_row][col]
+                                let ch = if grid_row < grid_cells_sel.len() && col < grid_cells_sel[grid_row].len() {
+                                    grid_cells_sel[grid_row][col]
                                 } else {
                                     ' '
                                 };
@@ -668,7 +670,8 @@ impl UIRenderer {
                 }
                 
                 // Highlight search results
-                if self.grid.searching && !self.grid.search_query.is_empty() {
+                let grid_cells_search = self.grid.cells();
+                if self.grid.searching() && !self.grid.search_query().is_empty() {
                     for display_col in 0..text_width as usize {
                         let grid_col = display_col + scroll_x;
                         if self.grid.is_search_match(grid_col, grid_row) {
@@ -679,8 +682,8 @@ impl UIRenderer {
                                 SetForegroundColor(Color::Black),
                             )?;
                             
-                            let ch = if grid_row < self.grid.cells.len() && grid_col < self.grid.cells[grid_row].len() {
-                                self.grid.cells[grid_row][grid_col]
+                            let ch = if grid_row < grid_cells_search.len() && grid_col < grid_cells_search[grid_row].len() {
+                                grid_cells_search[grid_row][grid_col]
                             } else {
                                 ' '
                             };
@@ -692,8 +695,10 @@ impl UIRenderer {
                 
                 // Then highlight the cursor (overwrites selection if at same position)
                 // ONLY render cursor if it's within the visible viewport
-                if grid_row == self.grid.cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
-                    let cursor_col = self.grid.cursor.0;
+                let grid_cells_cursor = self.grid.cells();
+                let cursor = self.grid.cursor();
+                if grid_row == cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
+                    let cursor_col = cursor.0;
                     // Check if cursor is visible with horizontal scrolling
                     if cursor_col >= scroll_x && cursor_col < scroll_x + text_width as usize {
                         let display_col = cursor_col - scroll_x;
@@ -704,8 +709,8 @@ impl UIRenderer {
                             SetForegroundColor(Color::White),
                         )?;
                         
-                        let ch = if grid_row < self.grid.cells.len() && cursor_col < self.grid.cells[grid_row].len() {
-                            self.grid.cells[grid_row][cursor_col]
+                        let ch = if grid_row < grid_cells_cursor.len() && cursor_col < grid_cells_cursor[grid_row].len() {
+                            grid_cells_cursor[grid_row][cursor_col]
                         } else {
                             ' '
                         };
@@ -715,11 +720,11 @@ impl UIRenderer {
                 }
             } else {
                 // No line numbers - build entire row as string
-                for display_col in 0..width.min(self.grid.width as u16) {
+                for display_col in 0..width.min(self.grid.width() as u16) {
                     let grid_col = (display_col as usize) + scroll_x;
                     
-                    let ch = if grid_row < self.grid.cells.len() && grid_col < self.grid.cells[grid_row].len() {
-                        self.grid.cells[grid_row][grid_col]
+                    let ch = if grid_row < grid_cells.len() && grid_col < grid_cells[grid_row].len() {
+                        grid_cells[grid_row][grid_col]
                     } else {
                         ' '
                     };
@@ -739,7 +744,8 @@ impl UIRenderer {
                 // grid_row already defined above
                 
                 // First, highlight any selected cells in this row
-                if self.grid.selecting {
+                let grid_cells_sel = self.grid.cells();
+                if self.grid.selecting() {
                     let (x1, y1, x2, y2) = self.grid.get_selection_bounds();
                     if grid_row >= y1 && grid_row <= y2 {
                         // This row has selected cells
@@ -752,8 +758,8 @@ impl UIRenderer {
                                     SetForegroundColor(Color::White),
                                 )?;
                                 
-                                let ch = if grid_row < self.grid.cells.len() && col < self.grid.cells[grid_row].len() {
-                                    self.grid.cells[grid_row][col]
+                                let ch = if grid_row < grid_cells_sel.len() && col < grid_cells_sel[grid_row].len() {
+                                    grid_cells_sel[grid_row][col]
                                 } else {
                                     ' '
                                 };
@@ -766,8 +772,10 @@ impl UIRenderer {
                 
                 // Then highlight the cursor
                 // ONLY render cursor if it's within the visible viewport
-                if grid_row == self.grid.cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
-                    let cursor_col = self.grid.cursor.0;
+                let grid_cells_cursor = self.grid.cells();
+                let cursor = self.grid.cursor();
+                if grid_row == cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
+                    let cursor_col = cursor.0;
                     // Check if cursor is visible with horizontal scrolling
                     if cursor_col >= scroll_x && cursor_col < scroll_x + width as usize {
                         let display_col = cursor_col - scroll_x;
@@ -779,8 +787,8 @@ impl UIRenderer {
                                 SetForegroundColor(Color::White),
                             )?;
                             
-                            let ch = if grid_row < self.grid.cells.len() && cursor_col < self.grid.cells[grid_row].len() {
-                                self.grid.cells[grid_row][cursor_col]
+                            let ch = if grid_row < grid_cells_cursor.len() && cursor_col < grid_cells_cursor[grid_row].len() {
+                                grid_cells_cursor[grid_row][cursor_col]
                             } else {
                                 ' '
                             };
@@ -793,7 +801,7 @@ impl UIRenderer {
         }
         
         // Render search box overlay if searching
-        if self.grid.searching {
+        if self.grid.searching() {
             // Draw search box in the middle of the text panel
             let box_width = 60.min(width.saturating_sub(4));
             let box_height = 3;
@@ -829,7 +837,7 @@ impl UIRenderer {
             )?;
             
             // Draw search prompt and query
-            let search_text = format!("🔍 Search: {}_", self.grid.search_query);
+            let search_text = format!("🔍 Search: {}_", self.grid.search_query());
             let text_x = box_x + 2;
             let text_y = box_y + 1;
             
@@ -1050,14 +1058,14 @@ impl UIRenderer {
         let viewport_height = vp.height.saturating_sub(1) as usize; // Subtract 1 for header
         
         // Store old scroll values to detect changes
-        let old_scroll_x = self.grid.scroll_x;
-        let old_scroll_y = self.grid.scroll_y;
+        let old_scroll_x = self.grid.scroll_x();
+        let old_scroll_y = self.grid.scroll_y();
         
         // Use the viewport-aware method
         self.grid.handle_key_with_modifiers_with_viewport(key, shift, ctrl, alt, viewport_width, viewport_height);
         
         // If scrolling changed due to cursor movement, we need to redraw
-        if old_scroll_x != self.grid.scroll_x || old_scroll_y != self.grid.scroll_y || needs_redraw {
+        if old_scroll_x != self.grid.scroll_x() || old_scroll_y != self.grid.scroll_y() || needs_redraw {
             self.viewports.text_viewport.mark_dirty();
         }
     }
@@ -1069,17 +1077,17 @@ impl UIRenderer {
     
     /// Check if Excel grid is in selection mode
     pub fn is_selecting(&self) -> bool {
-        self.grid.selecting
+        self.grid.selecting()
     }
     
     /// Check if Excel grid is in search mode
     pub fn is_searching(&self) -> bool {
-        self.grid.searching
+        self.grid.searching()
     }
     
     /// Get Excel grid cursor position
     pub fn get_grid_cursor(&self) -> (usize, usize) {
-        self.grid.cursor
+        self.grid.cursor()
     }
     
     /// Enhanced mouse handling with zone detection, scrolling, and zoom
@@ -1117,8 +1125,8 @@ impl UIRenderer {
                     }
                 } else {
                     // Regular scrolling - sync mouse handler with grid state first
-                    self.mouse_handler.text_scroll_x = self.grid.scroll_x;
-                    self.mouse_handler.text_scroll_y = self.grid.scroll_y;
+                    self.mouse_handler.text_scroll_x = self.grid.scroll_x();
+                    self.mouse_handler.text_scroll_y = self.grid.scroll_y();
                     
                     // Check for Shift for horizontal
                     let horizontal = event.modifiers.contains(KeyModifiers::SHIFT);
@@ -1137,14 +1145,14 @@ impl UIRenderer {
                                     // Horizontal scrolling with limits
                                     let padding = 20;
                                     let viewport_width = self.viewports.text_viewport.width as usize;
-                                    let max_scroll_x = (self.grid.width + padding).saturating_sub(viewport_width);
-                                    self.grid.scroll_x = x.min(max_scroll_x);
+                                    let max_scroll_x = (self.grid.width() + padding).saturating_sub(viewport_width);
+                                    *self.grid.scroll_x_mut() = x.min(max_scroll_x);
                                 } else {
                                     // Vertical scrolling with limits
                                     let padding = 20;
                                     let viewport_height = self.viewports.text_viewport.height.saturating_sub(1) as usize;
-                                    let max_scroll_y = (self.grid.height + padding).saturating_sub(viewport_height);
-                                    self.grid.scroll_y = y.min(max_scroll_y);
+                                    let max_scroll_y = (self.grid.height() + padding).saturating_sub(viewport_height);
+                                    *self.grid.scroll_y_mut() = y.min(max_scroll_y);
                                 }
                                                     self.viewports.text_viewport.mark_dirty();
                                 needs_redraw = true;
@@ -1163,14 +1171,14 @@ impl UIRenderer {
                 
                 if matches!(event.kind, MouseEventKind::ScrollLeft) {
                     // Scroll left (decrease scroll_x, minimum is 0 - no negative scrolling)
-                    self.grid.scroll_x = self.grid.scroll_x.saturating_sub(scroll_amount);
+                    *self.grid.scroll_x_mut() = self.grid.scroll_x().saturating_sub(scroll_amount);
                 } else {
                     // ScrollRight - allow scrolling past content with padding
                     let viewport_width = self.viewports.text_viewport.width as usize;
                     // Maximum scroll position: content width + padding - viewport width
-                    let max_scroll = (self.grid.width + padding).saturating_sub(viewport_width);
+                    let max_scroll = (self.grid.width() + padding).saturating_sub(viewport_width);
                     
-                    self.grid.scroll_x = (self.grid.scroll_x + scroll_amount).min(max_scroll);
+                    *self.grid.scroll_x_mut() = (self.grid.scroll_x() + scroll_amount).min(max_scroll);
                 }
                 
                 self.viewports.text_viewport.mark_dirty();
@@ -1217,12 +1225,12 @@ impl UIRenderer {
             let display_row = event.row.saturating_sub(2) as usize;  // -2 for header
             
             // Add scroll offsets to get actual grid position
-            let grid_col = display_col + self.grid.scroll_x;
-            let grid_row = display_row + self.grid.scroll_y;
+            let grid_col = display_col + self.grid.scroll_x();
+            let grid_row = display_row + self.grid.scroll_y();
             
             // Clamp to actual grid bounds (not just visible area)
-            let grid_col = grid_col.min(self.grid.width.saturating_sub(1));
-            let grid_row = grid_row.min(self.grid.height.saturating_sub(1));
+            let grid_col = grid_col.min(self.grid.width().saturating_sub(1));
+            let grid_row = grid_row.min(self.grid.height().saturating_sub(1));
             
             use crossterm::event::MouseEventKind;
             match event.kind {
@@ -1297,8 +1305,8 @@ impl UIRenderer {
         self.image_sent = false; // Reset flag for new PDF
         
         // Reset scroll states for new PDF
-        self.grid.scroll_x = 0;
-        self.grid.scroll_y = 0;
+        *self.grid.scroll_x_mut() = 0;
+        *self.grid.scroll_y_mut() = 0;
         
         // Update mouse handler dimensions and reset scroll states for new PDF
         let (width, height) = terminal::size().unwrap_or((80, 24));
