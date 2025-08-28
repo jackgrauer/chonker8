@@ -2,7 +2,7 @@
 // Now uses RopeGrid (ropey) for all operations for better performance
 
 use crossterm::event::KeyCode;
-use super::rope_grid::RopeGrid;
+use super::rope_grid::{RopeGrid, DirtyRegion};
 
 // Grid is now a thin wrapper around RopeGrid for backward compatibility
 pub struct Grid {
@@ -190,5 +190,30 @@ impl Grid {
     
     pub fn paste_text(&mut self, text: &str) {
         self.rope_grid.paste_text(text);
+    }
+    
+    // Incremental rendering support
+    pub fn get_cached_view(&mut self, viewport_width: usize, viewport_height: usize, offset_x: usize, offset_y: usize) -> Vec<Vec<char>> {
+        self.rope_grid.get_cached_view(viewport_width, viewport_height, offset_x, offset_y)
+    }
+    
+    pub fn get_dirty_regions(&self) -> &[DirtyRegion] {
+        self.rope_grid.get_dirty_regions()
+    }
+    
+    pub fn clear_dirty_regions(&mut self) {
+        self.rope_grid.clear_dirty_regions();
+    }
+    
+    pub fn mark_dirty(&mut self, x: usize, y: usize, width: usize, height: usize) {
+        self.rope_grid.mark_dirty(x, y, width, height);
+    }
+    
+    pub fn mark_all_dirty(&mut self) {
+        self.rope_grid.mark_all_dirty();
+    }
+    
+    pub fn revision(&self) -> u64 {
+        self.rope_grid.revision()
     }
 }

@@ -54,6 +54,9 @@ pub struct UIRenderer {
     pdf_zoom: f32,  // PDF panel zoom level
     text_zoom: f32,  // Text editor zoom level
     viewports: ViewportManager,  // Manage separate render regions
+    // Incremental rendering cache
+    previous_frame: Option<Vec<Vec<char>>>,
+    last_revision: u64,
 }
 
 impl UIRenderer {
@@ -122,6 +125,8 @@ impl UIRenderer {
             pdf_zoom: 1.0,
             text_zoom: 1.0,
             viewports: ViewportManager::new(term_width, term_height),
+            previous_frame: None,
+            last_revision: 0,
         }
     }
     
@@ -575,7 +580,7 @@ impl UIRenderer {
     
     
     
-    fn render_text_content(&self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
+    fn render_text_content(&mut self, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
         // Apply scrolling offsets to the grid rendering
         let scroll_y = self.grid.scroll_y();
         let scroll_x = self.grid.scroll_x();
@@ -850,6 +855,9 @@ impl UIRenderer {
                 ResetColor
             )?;
         }
+        
+        // Clear dirty regions after successful render
+        self.grid.clear_dirty_regions();
         
         Ok(())
     }

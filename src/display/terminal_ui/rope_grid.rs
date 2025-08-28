@@ -6,6 +6,36 @@ use ropey::Rope;
 use arboard::Clipboard;
 use std::sync::{Arc, Mutex};
 
+/// Represents a rectangular region that has been modified
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DirtyRegion {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl DirtyRegion {
+    pub fn new(x: usize, y: usize, width: usize, height: usize) -> Self {
+        Self { x, y, width, height }
+    }
+    
+    /// Check if this region contains a point
+    pub fn contains(&self, col: usize, row: usize) -> bool {
+        col >= self.x && col < self.x + self.width &&
+        row >= self.y && row < self.y + self.height
+    }
+    
+    /// Merge with another region to create a bounding box
+    pub fn merge(&self, other: &DirtyRegion) -> DirtyRegion {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let x2 = (self.x + self.width).max(other.x + other.width);
+        let y2 = (self.y + self.height).max(other.y + other.height);
+        DirtyRegion::new(x, y, x2 - x, y2 - y)
+    }
+}
+
 /// A grid backed by a rope data structure for efficient large text handling
 pub struct RopeGrid {
     rope: Rope,
@@ -24,6 +54,12 @@ pub struct RopeGrid {
     pub scroll_y: usize,
     // Cached for performance
     cached_width: usize,  // Maximum line width
+    
+    // Revision tracking and dirty regions
+    revision: u64,  // Increments on each change
+    dirty_regions: Vec<DirtyRegion>,  // Regions modified since last render
+    cached_view: Option<Vec<Vec<char>>>,  // Cached rendered view
+    cached_revision: u64,  // Revision of cached view
 }
 
 impl RopeGrid {
@@ -51,6 +87,10 @@ impl RopeGrid {
             scroll_x: 0,
             scroll_y: 0,
             cached_width: width,
+            revision: 0,
+            dirty_regions: Vec::new(),
+            cached_view: None,
+            cached_revision: 0,
         }
     }
 
@@ -83,6 +123,10 @@ impl RopeGrid {
             scroll_x: 0,
             scroll_y: 0,
             cached_width: max_width,
+            revision: 0,
+            dirty_regions: Vec::new(),
+            cached_view: None,
+            cached_revision: 0,
         }
     }
 
@@ -94,6 +138,55 @@ impl RopeGrid {
     /// Get the height of the grid (number of lines)
     pub fn height(&self) -> usize {
         self.rope.len_lines()
+    }
+    
+    /// Get the current revision number
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+    
+    /// Mark a region as dirty (needs redrawing)
+    pub fn mark_dirty(&mut self, x: usize, y: usize, width: usize, height: usize) {
+        let new_region = DirtyRegion::new(x, y, width, height);
+        
+        // Try to merge with existing regions to minimize draw calls
+        let mut merged = false;
+        for region in &mut self.dirty_regions {
+            // If regions are adjacent or overlapping, merge them
+            if region.x <= new_region.x + new_region.width && 
+                new_region.x <= region.x + region.width &&
+                region.y <= new_region.y + new_region.height && 
+                new_region.y <= region.y + region.height {
+                *region = region.merge(&new_region);
+                merged = true;
+                break;
+            }
+        }
+        
+        if !merged {
+            self.dirty_regions.push(new_region);
+        }
+    }
+    
+    /// Mark entire viewport as dirty
+    pub fn mark_all_dirty(&mut self) {
+        self.dirty_regions.clear();
+        self.dirty_regions.push(DirtyRegion::new(0, 0, self.width(), self.height()));
+    }
+    
+    /// Get dirty regions since last clear
+    pub fn get_dirty_regions(&self) -> &[DirtyRegion] {
+        &self.dirty_regions
+    }
+    
+    /// Clear dirty regions (call after rendering)
+    pub fn clear_dirty_regions(&mut self) {
+        self.dirty_regions.clear();
+    }
+    
+    /// Increment revision (marks a change)
+    fn increment_revision(&mut self) {
+        self.revision += 1;
     }
 
     /// Get a character at a specific position
@@ -114,9 +207,12 @@ impl RopeGrid {
     pub fn set_char(&mut self, col: usize, row: usize, ch: char) {
         if row >= self.height() {
             // Extend the rope with new lines if needed
+            let old_height = self.height();
             while self.height() <= row {
                 self.rope.append(Rope::from_str("\n"));
             }
+            // Mark new lines as dirty
+            self.mark_dirty(0, old_height, self.width(), row - old_height + 1);
         }
 
         let line_start = self.rope.line_to_char(row);
@@ -133,6 +229,8 @@ impl RopeGrid {
                 self.rope.len_chars()
             };
             self.rope.insert(insert_pos, &spaces);
+            // Mark extended region as dirty
+            self.mark_dirty(line_len, row, spaces_needed, 1);
         }
 
         // Replace the character
@@ -147,6 +245,10 @@ impl RopeGrid {
         if new_line_len > self.cached_width {
             self.cached_width = new_line_len;
         }
+        
+        // Mark the character position as dirty
+        self.mark_dirty(col, row, 1, 1);
+        self.increment_revision();
     }
 
     /// Get a line as a string
@@ -193,6 +295,7 @@ impl RopeGrid {
 
     /// Insert text at cursor position
     pub fn insert_text(&mut self, text: &str) {
+        let old_cursor = self.cursor;
         let line_start = self.rope.line_to_char(self.cursor.1);
         let char_pos = line_start + self.cursor.0;
         
@@ -201,15 +304,21 @@ impl RopeGrid {
         // Update cursor position
         let inserted_lines = text.matches('\n').count();
         if inserted_lines > 0 {
+            // Mark all affected lines as dirty
+            self.mark_dirty(0, old_cursor.1, self.width(), inserted_lines + 1);
+            
             self.cursor.1 += inserted_lines;
             let last_line_len = text.split('\n').last().unwrap_or("").len();
             self.cursor.0 = last_line_len;
         } else {
+            // Mark only the current line from cursor to end as dirty
+            self.mark_dirty(old_cursor.0, old_cursor.1, text.len() + 10, 1);
             self.cursor.0 += text.len();
         }
 
         // Update cached width
         self.update_cached_width();
+        self.increment_revision();
     }
 
     /// Delete character at cursor position
@@ -260,6 +369,40 @@ impl RopeGrid {
         }
         
         result
+    }
+    
+    /// Get cached view or generate new one if revision changed
+    pub fn get_cached_view(&mut self, viewport_width: usize, viewport_height: usize, offset_x: usize, offset_y: usize) -> Vec<Vec<char>> {
+        // Check if we need to regenerate the cache
+        let need_full_refresh = self.cached_view.is_none() || 
+                               self.cached_revision != self.revision ||
+                               self.cached_view.as_ref().map_or(true, |v| v.len() != viewport_height || v.get(0).map_or(true, |r| r.len() != viewport_width));
+        
+        if need_full_refresh {
+            // Generate fresh view
+            self.cached_view = Some(self.as_2d_vec(viewport_width, viewport_height, offset_x, offset_y));
+            self.cached_revision = self.revision;
+            self.mark_all_dirty();
+        } else {
+            // Update only dirty regions
+            let dirty_regions = self.dirty_regions.clone();
+            for region in &dirty_regions {
+                for row in region.y..region.y.min(region.y + region.height).min(viewport_height) {
+                    for col in region.x..region.x.min(region.x + region.width).min(viewport_width) {
+                        let actual_row = row + offset_y;
+                        let actual_col = col + offset_x;
+                        let ch = self.get_char(actual_col, actual_row);
+                        if let Some(cached) = &mut self.cached_view {
+                            cached[row][col] = ch;
+                        }
+                    }
+                }
+            }
+        }
+        
+        self.cached_view.clone().unwrap_or_else(|| {
+            self.as_2d_vec(viewport_width, viewport_height, offset_x, offset_y)
+        })
     }
 
     /// Ensure cursor is visible in viewport
@@ -364,14 +507,23 @@ impl RopeGrid {
             }
             KeyCode::Left => {
                 if self.cursor.0 > 0 {
+                    let old_cursor = self.cursor;
                     self.cursor.0 -= 1;
+                    // Mark old and new cursor positions as dirty
+                    self.mark_dirty(old_cursor.0, old_cursor.1, 1, 1);
+                    self.mark_dirty(self.cursor.0, self.cursor.1, 1, 1);
                 }
             }
             KeyCode::Right => {
+                let old_cursor = self.cursor;
                 self.cursor.0 += 1;
+                // Mark old and new cursor positions as dirty
+                self.mark_dirty(old_cursor.0, old_cursor.1, 1, 1);
+                self.mark_dirty(self.cursor.0, self.cursor.1, 1, 1);
             }
             KeyCode::Up => {
                 if self.cursor.1 > 0 {
+                    let old_cursor = self.cursor;
                     self.cursor.1 -= 1;
                     // Clamp cursor to line length
                     let line = self.rope.line(self.cursor.1);
@@ -379,10 +531,14 @@ impl RopeGrid {
                     if self.cursor.0 > line_len {
                         self.cursor.0 = line_len;
                     }
+                    // Mark old and new cursor positions as dirty
+                    self.mark_dirty(old_cursor.0, old_cursor.1, 1, 1);
+                    self.mark_dirty(self.cursor.0, self.cursor.1, 1, 1);
                 }
             }
             KeyCode::Down => {
                 if self.cursor.1 < self.height() - 1 {
+                    let old_cursor = self.cursor;
                     self.cursor.1 += 1;
                     // Clamp cursor to line length
                     let line = self.rope.line(self.cursor.1);
@@ -390,6 +546,9 @@ impl RopeGrid {
                     if self.cursor.0 > line_len {
                         self.cursor.0 = line_len;
                     }
+                    // Mark old and new cursor positions as dirty
+                    self.mark_dirty(old_cursor.0, old_cursor.1, 1, 1);
+                    self.mark_dirty(self.cursor.0, self.cursor.1, 1, 1);
                 }
             }
             KeyCode::Home => {
