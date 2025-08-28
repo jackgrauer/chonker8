@@ -114,12 +114,13 @@ impl IntegratedFilePicker {
             let path = item.data.as_ref();
 
             // Strip common prefixes for cleaner display
+            // Fix: Use safe path slicing to prevent panic on short paths
             let clean_path = if path.starts_with("/Users/jack/Downloads/") {
-                &path[22..] // Length of "/Users/jack/Downloads/"
+                path.get(22..).unwrap_or(path) // Safe slice with fallback
             } else if path.starts_with("/Users/jack/Desktop/") {
-                &path[20..] // Length of "/Users/jack/Desktop/"
+                path.get(20..).unwrap_or(path) // Safe slice with fallback
             } else if path.starts_with("/Users/jack/Documents/") {
-                &path[22..] // Length of "/Users/jack/Documents/"
+                path.get(22..).unwrap_or(path) // Safe slice with fallback
             } else {
                 path
             };
@@ -282,7 +283,13 @@ impl IntegratedFilePicker {
         
         if self.selected_index < all_matches.len() {
             let selected = all_matches[self.selected_index].data.as_ref();
-            Some(PathBuf::from(selected))
+            // Fix: Validate path exists before returning it
+            let path = PathBuf::from(selected);
+            if path.exists() && path.is_file() {
+                Some(path)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -313,6 +320,11 @@ fn find_pdf_files() -> Result<Vec<String>> {
 }
 
 fn find_pdfs_in_dir(search_dir: &str) -> Result<Vec<String>> {
+    // Fix: Validate search directory exists before attempting to search
+    if !std::path::Path::new(search_dir).exists() {
+        return Ok(Vec::new());
+    }
+    
     // Try using fd first (faster), fallback to find
     let output = if command_exists("fd") {
         Command::new("fd")

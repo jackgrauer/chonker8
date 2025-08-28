@@ -99,21 +99,36 @@ impl Grid {
         }
     }
     
+    /// Set viewport dimensions (for ensuring cursor stays visible)
+    pub fn set_viewport_size(&mut self, viewport_width: usize, viewport_height: usize) {
+        self.ensure_cursor_visible(viewport_width, viewport_height);
+    }
+    
     /// Create grid from pdftotext output
-    pub fn from_pdftext(text: &str, width: usize) -> Self {
+    pub fn from_pdftext(text: &str, min_width: usize) -> Self {
         let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
         let height = lines.len().max(24);
+        
+        // Find the maximum line length to determine grid width
+        let max_line_length = lines.iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        
+        // Use the larger of min_width or the longest line
+        let actual_width = max_line_length.max(min_width);
         
         let mut cells = Vec::with_capacity(height);
         for line in lines.iter() {
             let mut row: Vec<char> = line.chars().collect();
-            row.resize(width, ' ');
+            // Pad with spaces if shorter than grid width
+            row.resize(actual_width, ' ');
             cells.push(row);
         }
         
         // Ensure minimum height
         while cells.len() < height {
-            cells.push(vec![' '; width]);
+            cells.push(vec![' '; actual_width]);
         }
         
         let grid_height = cells.len();
@@ -124,7 +139,7 @@ impl Grid {
             cursor: (0, 0),
             selecting: false,
             anchor: (0, 0),
-            width,
+            width: actual_width,
             height: grid_height,
             clipboard,
             status_message: None,
@@ -135,6 +150,30 @@ impl Grid {
             scroll_x: 0,
             scroll_y: 0,
         }
+    }
+    
+    /// Ensure cursor is visible in the viewport
+    pub fn ensure_cursor_visible(&mut self, viewport_width: usize, viewport_height: usize) {
+        // Horizontal scrolling to keep cursor in view
+        if self.cursor.0 < self.scroll_x {
+            self.scroll_x = self.cursor.0;
+        } else if self.cursor.0 >= self.scroll_x + viewport_width {
+            self.scroll_x = self.cursor.0.saturating_sub(viewport_width - 1);
+        }
+        
+        // Vertical scrolling to keep cursor in view
+        if self.cursor.1 < self.scroll_y {
+            self.scroll_y = self.cursor.1;
+        } else if self.cursor.1 >= self.scroll_y + viewport_height {
+            self.scroll_y = self.cursor.1.saturating_sub(viewport_height - 1);
+        }
+    }
+    
+    /// Handle keyboard input with modifiers (with viewport tracking)
+    pub fn handle_key_with_modifiers_with_viewport(&mut self, key: KeyCode, shift: bool, ctrl: bool, _alt: bool, viewport_width: usize, viewport_height: usize) {
+        self.handle_key_with_modifiers(key, shift, ctrl, _alt);
+        // Ensure cursor stays visible after any key input
+        self.ensure_cursor_visible(viewport_width, viewport_height);
     }
     
     /// Handle keyboard input with modifiers
@@ -478,6 +517,12 @@ impl Grid {
         self.status_message = Some(format!("POS: {},{}", col + 1, row + 1));
     }
     
+    /// Handle mouse down with viewport adjustment
+    pub fn handle_mouse_down_with_viewport(&mut self, col: usize, row: usize, viewport_width: usize, viewport_height: usize) {
+        self.handle_mouse_down(col, row);
+        self.ensure_cursor_visible(viewport_width, viewport_height);
+    }
+    
     /// Handle mouse drag for selection
     pub fn handle_mouse_drag(&mut self, col: usize, row: usize) {
         // Update cursor position and enable selection
@@ -499,6 +544,12 @@ impl Grid {
             let (x1, y1, x2, y2) = self.get_selection_bounds();
             self.status_message = Some(format!("SELECTED: {},{} to {},{}", x1 + 1, y1 + 1, x2 + 1, y2 + 1));
         }
+    }
+    
+    /// Handle mouse up with viewport adjustment
+    pub fn handle_mouse_up_with_viewport(&mut self, col: usize, row: usize, viewport_width: usize, viewport_height: usize) {
+        self.handle_mouse_up(col, row);
+        self.ensure_cursor_visible(viewport_width, viewport_height);
     }
     
     /// Clear status message

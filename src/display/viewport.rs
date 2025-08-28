@@ -65,28 +65,33 @@ impl Viewport {
 
     /// Clear a specific line within the viewport
     pub fn clear_line(&self, line: u16) -> Result<()> {
-        if line < self.height {
-            execute!(
-                stdout(),
-                MoveTo(self.x, self.y + line),
-                Clear(ClearType::UntilNewLine)
-            )?;
+        // Fix: Use >= to prevent off-by-one error
+        if line >= self.height {
+            return Ok(()); // Line is outside viewport, nothing to clear
         }
+        
+        execute!(
+            stdout(),
+            MoveTo(self.x, self.y + line),
+            Clear(ClearType::UntilNewLine)
+        )?;
         Ok(())
     }
 
     /// Move cursor to a position within this viewport
     pub fn move_to(&self, x: u16, y: u16) -> Result<()> {
-        let actual_x = (self.x + x).min(self.x + self.width - 1);
-        let actual_y = (self.y + y).min(self.y + self.height - 1);
+        // Fix: Prevent arithmetic overflow with saturating operations
+        let actual_x = self.x.saturating_add(x).min(self.x.saturating_add(self.width).saturating_sub(1));
+        let actual_y = self.y.saturating_add(y).min(self.y.saturating_add(self.height).saturating_sub(1));
         execute!(stdout(), MoveTo(actual_x, actual_y))?;
         Ok(())
     }
 
     /// Check if a position is within this viewport
     pub fn contains(&self, x: u16, y: u16) -> bool {
-        x >= self.x && x < self.x + self.width &&
-        y >= self.y && y < self.y + self.height
+        // Fix: Use saturating arithmetic to prevent overflow
+        x >= self.x && x < self.x.saturating_add(self.width) &&
+        y >= self.y && y < self.y.saturating_add(self.height)
     }
 
     /// Draw a border around this viewport

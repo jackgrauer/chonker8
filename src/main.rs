@@ -69,6 +69,55 @@ impl App {
         }
     }
     
+    fn launch_debug_viewer(&mut self) -> Result<bool> {
+        use chonker8::display::debug_viewer::{DebugViewer, DebugViewerExit};
+        use crossterm::{terminal, execute, terminal::{Clear, ClearType}};
+        use std::io::stdout;
+        
+        // Get terminal size
+        let (width, height) = terminal::size().unwrap_or((80, 24));
+        
+        // Create debug viewer and try to load the debug file
+        let mut debug_viewer = DebugViewer::new(width as usize, height as usize);
+        
+        // Try to load the debug file, or show a message if it doesn't exist
+        if std::path::Path::new("/tmp/chonker8_debug.txt").exists() {
+            if let Ok(content) = std::fs::read_to_string("/tmp/chonker8_debug.txt") {
+                debug_viewer.load_from_string(content);
+            } else {
+                debug_viewer.load_from_string("Unable to read debug file".to_string());
+            }
+        } else {
+            debug_viewer.load_from_string("No debug log available yet.\nDebug messages will appear here when errors occur.".to_string());
+        }
+        
+        // Run the debug viewer - it will return the exit reason
+        let exit_reason = debug_viewer.run()?;
+        
+        // After exiting, clear and redraw
+        execute!(stdout(), Clear(ClearType::All)).ok();
+        self.needs_redraw = true;
+        self.renderer.force_complete_redraw();
+        
+        // Handle the exit reason
+        match exit_reason {
+            DebugViewerExit::Tab => {
+                // Tab was pressed, cycle to next screen
+                // Re-enable mouse capture after debug viewer
+                use crossterm::{execute, event::EnableMouseCapture};
+                use std::io::stdout;
+                execute!(stdout(), EnableMouseCapture).ok();
+                self.renderer.set_screen(Screen::FilePicker);
+                Ok(false) // Don't exit app
+            }
+            DebugViewerExit::Escape => {
+                // Esc was pressed, exit the app
+                self.running = false;
+                Ok(true) // Exit app
+            }
+        }
+    }
+    
     fn new() -> Result<Self> {
         // Load initial config
         let config = UIConfig::load()?;
@@ -231,10 +280,9 @@ impl App {
                 
                 if time_since_last_render >= Duration::from_millis(16) {
                     // Show cursor when in PDF viewer (for text editing), hide otherwise
-                    if *self.renderer.current_screen() == Screen::PdfViewer {
-                        execute!(stdout(), Show)?;
-                    } else {
-                        execute!(stdout(), Hide)?;
+                    match *self.renderer.current_screen() {
+                        Screen::PdfViewer => execute!(stdout(), Show)?,
+                        _ => execute!(stdout(), Hide)?,
                     }
                     
                     self.renderer.render()?;
@@ -301,9 +349,12 @@ impl App {
             // Check for navigation keys FIRST (Tab, Esc)
             match key.code {
                 KeyCode::Tab => {
-                    // Tab always switches screens
-                    self.renderer.next_screen();
-                    self.needs_redraw = true;
+                    // Tab cycles to Debug Viewer - launch it immediately
+                    if self.launch_debug_viewer()? {
+                        // User pressed Esc in debug viewer, exit app
+                        return Ok(());
+                    }
+                    // Otherwise Tab was pressed, already cycled to next screen
                     return Ok(());
                 }
                 KeyCode::Esc => {
@@ -390,44 +441,55 @@ impl App {
                 // Load the selected PDF and switch to PDF viewer
                 // Try to load the PDF
                 if let Err(e) = self.load_pdf(&selected_file) {
-                    // Clear screen and show error in a clean way
-                    use crossterm::{execute, terminal::{Clear, ClearType}, cursor::MoveTo};
-                    use std::io::stdout;
-                    
-                    // Temporarily disable raw mode for clean output
-                    crossterm::terminal::disable_raw_mode().ok();
-                    execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0)).ok();
-                    
-                    println!("\n========== PDF LOAD ERROR ==========\n");
-                    println!("File: {}\n", selected_file);
-                    println!("Error: {}\n", e);
-                    println!("========================================");
-                    
-                    // Write debug info to the single debug file
+                    // Write complete error info to debug file FIRST
                     let debug_msg = format!(
-                        "PDF LOAD ERROR\nFile: {}\n\nError Details:\n{}",
+                        "========== PDF LOAD ERROR ==========\n\nFile: {}\n\nError Details:\n{}\n\n========================================",
                         selected_file, e
                     );
                     Self::write_debug(&debug_msg);
-                    println!("\nDebug info written to: /tmp/chonker8_debug.txt");
                     
-                    println!("\nPress Enter to return to file picker...");
+                    // Launch the interactive debug viewer
+                    use chonker8::display::debug_viewer::{DebugViewer, DebugViewerExit};
+                    use crossterm::{terminal, execute, terminal::{Clear, ClearType}};
+                    use std::io::stdout;
                     
-                    // Flush to ensure output appears
-                    std::io::Write::flush(&mut stdout()).ok();
+                    // Get terminal size
+                    let (width, height) = terminal::size().unwrap_or((80, 24));
                     
-                    // Wait for Enter key
-                    let mut input = String::new();
-                    std::io::stdin().read_line(&mut input).ok();
+                    // Create debug viewer and load the error message
+                    let mut debug_viewer = DebugViewer::new(width as usize, height as usize);
+                    debug_viewer.load_from_string(debug_msg);
                     
-                    // Re-enable raw mode and force redraw
-                    crossterm::terminal::enable_raw_mode().ok();
+                    // Run the debug viewer - user can select and copy text
+                    if let Ok(exit_reason) = debug_viewer.run() {
+                        match exit_reason {
+                            DebugViewerExit::Escape => {
+                                // User pressed Esc, exit the app
+                                self.running = false;
+                                return Ok(());
+                            }
+                            DebugViewerExit::Tab => {
+                                // User pressed Tab, continue normally
+                            }
+                        }
+                    }
+                    
+                    // After exiting debug viewer, clear screen and redraw
                     execute!(stdout(), Clear(ClearType::All)).ok();
+                    // Re-enable mouse capture after debug viewer
+                    execute!(stdout(), EnableMouseCapture).ok();
                     self.needs_redraw = true;
+                    self.renderer.force_complete_redraw();
                     
                     // Stay on file picker screen
                     return Ok(());
                 }
+                // Re-enable mouse capture after successful PDF load
+                // This ensures mouse events work after loading from file picker
+                use crossterm::{execute, event::EnableMouseCapture};
+                use std::io::stdout;
+                execute!(stdout(), EnableMouseCapture).ok();
+                
                 self.renderer.set_screen(Screen::PdfViewer);
                 self.needs_redraw = true;
                 return Ok(());
@@ -436,8 +498,20 @@ impl App {
             // Check for navigation keys even on file picker screen
             match key.code {
                 KeyCode::Tab => {
-                    self.renderer.next_screen();
-                    self.needs_redraw = true;
+                    // Tab cycles to PDF Viewer (or Debug Viewer if no PDF is loaded)
+                    if self.renderer.current_pdf_path.is_some() {
+                        // Ensure mouse capture is enabled when switching to PDF viewer
+                        execute!(stdout(), EnableMouseCapture).ok();
+                        self.renderer.set_screen(Screen::PdfViewer);
+                        self.needs_redraw = true;
+                    } else {
+                        // Skip directly to Debug Viewer if no PDF is loaded
+                        if self.launch_debug_viewer()? {
+                            // User pressed Esc in debug viewer, exit app
+                            return Ok(());
+                        }
+                        // Otherwise Tab was pressed, already cycled to next screen
+                    }
                     return Ok(());
                 }
                 KeyCode::Esc => {
@@ -452,12 +526,8 @@ impl App {
             }
         }
         
-        // Handle global navigation keys
+        // Handle global navigation keys (Escape only - Tab is handled per-screen)
         match key.code {
-            KeyCode::Tab => {
-                self.renderer.next_screen();
-                self.needs_redraw = true;
-            }
             KeyCode::Esc => {
                 self.running = false;
             }
@@ -470,6 +540,7 @@ impl App {
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
         // Use enhanced mouse handling with zone detection
         let screen = self.renderer.current_screen();
+        
         if *screen == Screen::PdfViewer {
             // Use the new enhanced mouse handler
             let needs_redraw = self.renderer.handle_mouse_enhanced(mouse);

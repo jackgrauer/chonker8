@@ -75,14 +75,20 @@ impl MouseHandler {
     
     /// Detect which zone the mouse is in
     pub fn detect_zone(&mut self, x: u16, y: u16) -> MouseZone {
+        // Fix: Check term_height is not 0 to prevent underflow
+        if self.term_height == 0 {
+            self.current_zone = MouseZone::None;
+            return MouseZone::None;
+        }
+        
         // Status bar (bottom row)
-        if y >= self.term_height - 1 {
+        if y >= self.term_height.saturating_sub(1) {
             self.current_zone = MouseZone::StatusBar;
             return MouseZone::StatusBar;
         }
         
         // Divider (split column ± 1)
-        if x >= self.split_x.saturating_sub(1) && x <= self.split_x + 1 {
+        if x >= self.split_x.saturating_sub(1) && x <= self.split_x.saturating_add(1) {
             self.current_zone = MouseZone::Divider;
             return MouseZone::Divider;
         }

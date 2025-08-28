@@ -23,6 +23,7 @@ use super::grid::Grid;
 pub enum Screen {
     FilePicker,
     PdfViewer,
+    DebugViewer,
 }
 
 pub struct UIRenderer {
@@ -103,7 +104,7 @@ impl UIRenderer {
             cursor_x: 0,
             cursor_y: 0,
             current_screen: Screen::FilePicker,
-            available_screens: vec![Screen::FilePicker, Screen::PdfViewer],
+            available_screens: vec![Screen::FilePicker, Screen::PdfViewer, Screen::DebugViewer],
             file_picker,
             current_pdf_path: None,
             current_pdf_image: None,
@@ -169,6 +170,7 @@ impl UIRenderer {
         match self.current_screen {
             Screen::FilePicker => self.render_file_picker_screen(),
             Screen::PdfViewer => self.render_pdf_screen(),
+            Screen::DebugViewer => self.render_debug_viewer_screen(),
         }
     }
     
@@ -176,6 +178,7 @@ impl UIRenderer {
         match self.current_screen {
             Screen::FilePicker => self.render_integrated_file_picker_screen(file_picker),
             Screen::PdfViewer => self.render_pdf_screen(),
+            Screen::DebugViewer => self.render_debug_viewer_screen(),
         }
     }
     
@@ -314,7 +317,7 @@ impl UIRenderer {
         if self.viewports.text_viewport.is_dirty() {
             // Render text content using viewport dimensions
             let vp = &self.viewports.text_viewport;
-            self.render_text_content(vp.x, vp.y + 1, vp.width, vp.height - 1)?;
+            self.render_text_content(vp.x, vp.y.saturating_add(1), vp.width, vp.height.saturating_sub(1))?;
             
             self.viewports.text_viewport.mark_clean();
         }
@@ -359,6 +362,19 @@ impl UIRenderer {
         // Keep cursor hidden - we use colored backgrounds to show cursor position
         // This prevents the double cursor visual issue
         
+        stdout().flush()?;
+        Ok(())
+    }
+    
+    fn render_debug_viewer_screen(&mut self) -> Result<()> {
+        // This screen shouldn't normally be rendered since we launch the interactive viewer directly
+        // But keep a minimal implementation just in case
+        execute!(stdout(), Clear(ClearType::All))?;
+        execute!(
+            stdout(),
+            MoveTo(2, 2),
+            Print("Loading Debug Viewer..."),
+        )?;
         stdout().flush()?;
         Ok(())
     }
@@ -594,7 +610,7 @@ impl UIRenderer {
                 
                 // Grid content - build entire row as string first
                 let text_start = 5;
-                let text_width = width - text_start;
+                let text_width = width.saturating_sub(text_start);
                 
                 // Build the row string with horizontal scrolling
                 for display_col in 0..text_width.min(self.grid.width as u16) {
@@ -609,7 +625,7 @@ impl UIRenderer {
                     row_output.push(ch);
                     
                     // Add extra spacing when zoomed in
-                    if zoom > 1.5 && display_col < text_width - 1 {
+                    if zoom > 1.5 && (display_col as usize) < text_width.saturating_sub(1) as usize {
                         row_output.push(' ');
                     }
                 }
@@ -675,7 +691,8 @@ impl UIRenderer {
                 }
                 
                 // Then highlight the cursor (overwrites selection if at same position)
-                if grid_row == self.grid.cursor.1 {
+                // ONLY render cursor if it's within the visible viewport
+                if grid_row == self.grid.cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
                     let cursor_col = self.grid.cursor.0;
                     // Check if cursor is visible with horizontal scrolling
                     if cursor_col >= scroll_x && cursor_col < scroll_x + text_width as usize {
@@ -748,23 +765,28 @@ impl UIRenderer {
                 }
                 
                 // Then highlight the cursor
-                if grid_row == self.grid.cursor.1 {
+                // ONLY render cursor if it's within the visible viewport
+                if grid_row == self.grid.cursor.1 && grid_row >= scroll_y && grid_row < scroll_y + visible_rows as usize {
                     let cursor_col = self.grid.cursor.0;
-                    if cursor_col < width as usize {
-                        execute!(
-                            stdout(),
-                            MoveTo(x + cursor_col as u16, screen_y),
-                            SetBackgroundColor(Color::DarkBlue),
-                            SetForegroundColor(Color::White),
-                        )?;
-                        
-                        let ch = if grid_row < self.grid.cells.len() && cursor_col < self.grid.cells[grid_row].len() {
-                            self.grid.cells[grid_row][cursor_col]
-                        } else {
-                            ' '
-                        };
-                        
-                        execute!(stdout(), Print(ch), ResetColor)?;
+                    // Check if cursor is visible with horizontal scrolling
+                    if cursor_col >= scroll_x && cursor_col < scroll_x + width as usize {
+                        let display_col = cursor_col - scroll_x;
+                        if display_col < width as usize {
+                            execute!(
+                                stdout(),
+                                MoveTo(x + display_col as u16, screen_y),
+                                SetBackgroundColor(Color::DarkBlue),
+                                SetForegroundColor(Color::White),
+                            )?;
+                            
+                            let ch = if grid_row < self.grid.cells.len() && cursor_col < self.grid.cells[grid_row].len() {
+                                self.grid.cells[grid_row][cursor_col]
+                            } else {
+                                ' '
+                            };
+                            
+                            execute!(stdout(), Print(ch), ResetColor)?;
+                        }
                     }
                 }
             }
@@ -773,9 +795,9 @@ impl UIRenderer {
         // Render search box overlay if searching
         if self.grid.searching {
             // Draw search box in the middle of the text panel
-            let box_width = 60.min(width - 4);
+            let box_width = 60.min(width.saturating_sub(4));
             let box_height = 3;
-            let box_x = x + (width - box_width) / 2;
+            let box_x = x.saturating_add(width.saturating_sub(box_width) / 2);
             let box_y = y + (height / 2).saturating_sub(1);
             
             // Draw box background
@@ -794,15 +816,15 @@ impl UIRenderer {
                 SetForegroundColor(Color::Yellow),
                 MoveTo(box_x, box_y),
                 Print("╔"),
-                Print("═".repeat((box_width - 2) as usize)),
+                Print("═".repeat(box_width.saturating_sub(2) as usize)),
                 Print("╗"),
                 MoveTo(box_x, box_y + 1),
                 Print("║"),
-                MoveTo(box_x + box_width - 1, box_y + 1),
+                MoveTo(box_x.saturating_add(box_width).saturating_sub(1), box_y.saturating_add(1)),
                 Print("║"),
                 MoveTo(box_x, box_y + 2),
                 Print("╚"),
-                Print("═".repeat((box_width - 2) as usize)),
+                Print("═".repeat(box_width.saturating_sub(2) as usize)),
                 Print("╝")
             )?;
             
@@ -816,7 +838,7 @@ impl UIRenderer {
                 MoveTo(text_x, text_y),
                 SetBackgroundColor(Color::DarkGrey),
                 SetForegroundColor(Color::White),
-                Print(&search_text[..search_text.len().min((box_width - 4) as usize)]),
+                Print(&search_text[..search_text.len().min(box_width.saturating_sub(4) as usize)]),
                 ResetColor
             )?;
         }
@@ -825,7 +847,7 @@ impl UIRenderer {
     }
     
     fn render_status_bar(&self, width: u16, height: u16) -> Result<()> {
-        let status_y = height - 1;
+        let status_y = height.saturating_sub(1);
         
         // Clear status bar line with inverse video for visibility
         execute!(
@@ -852,7 +874,7 @@ impl UIRenderer {
         
         // Right side: position
         let right_status = format!(" {}:{} ", self.cursor_y + 1, self.cursor_x + 1);
-        let right_x = width - right_status.len() as u16;
+        let right_x = width.saturating_sub(right_status.len() as u16);
         execute!(stdout(), MoveTo(right_x, status_y), Print(&right_status))?;
         
         Ok(())
@@ -942,6 +964,16 @@ impl UIRenderer {
         self.current_screen = screen;
     }
     
+    pub fn force_complete_redraw(&mut self) {
+        // Mark all viewports as dirty to force complete redraw
+        self.viewports.pdf_viewport.mark_dirty();
+        self.viewports.text_viewport.mark_dirty();
+        self.viewports.status_viewport.mark_dirty();
+        
+        // Clear any cached image to force re-render
+        self.current_image_id = None;
+    }
+    
     
     fn get_debug_max_scroll_offset(&self) -> usize {
         // Calculate the visible height for debug content
@@ -954,7 +986,7 @@ impl UIRenderer {
         if self.debug_messages.len() <= content_height {
             0
         } else {
-            self.debug_messages.len() - content_height
+            self.debug_messages.len().saturating_sub(content_height)
         }
     }
     
@@ -1012,9 +1044,20 @@ impl UIRenderer {
             _ => false,
         };
         
-        self.grid.handle_key_with_modifiers(key, shift, ctrl, alt);
+        // Get viewport dimensions for the text editor
+        let vp = &self.viewports.text_viewport;
+        let viewport_width = vp.width as usize;
+        let viewport_height = vp.height.saturating_sub(1) as usize; // Subtract 1 for header
         
-        if needs_redraw {
+        // Store old scroll values to detect changes
+        let old_scroll_x = self.grid.scroll_x;
+        let old_scroll_y = self.grid.scroll_y;
+        
+        // Use the viewport-aware method
+        self.grid.handle_key_with_modifiers_with_viewport(key, shift, ctrl, alt, viewport_width, viewport_height);
+        
+        // If scrolling changed due to cursor movement, we need to redraw
+        if old_scroll_x != self.grid.scroll_x || old_scroll_y != self.grid.scroll_y || needs_redraw {
             self.viewports.text_viewport.mark_dirty();
         }
     }
@@ -1073,7 +1116,11 @@ impl UIRenderer {
                         }
                     }
                 } else {
-                    // Regular scrolling (check for Shift for horizontal)
+                    // Regular scrolling - sync mouse handler with grid state first
+                    self.mouse_handler.text_scroll_x = self.grid.scroll_x;
+                    self.mouse_handler.text_scroll_y = self.grid.scroll_y;
+                    
+                    // Check for Shift for horizontal
                     let horizontal = event.modifiers.contains(KeyModifiers::SHIFT);
                     let (handled, action) = self.mouse_handler.handle_scroll(&event, horizontal);
                     if handled {
@@ -1084,9 +1131,21 @@ impl UIRenderer {
                                 self.viewports.pdf_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
-                            ScrollAction::TextScroll(_x, y) => {
-                                // Update text scroll offset
-                                self.grid.scroll_y = y;
+                            ScrollAction::TextScroll(x, y) => {
+                                // Update text scroll offset (handle both x and y)
+                                if horizontal {
+                                    // Horizontal scrolling with limits
+                                    let padding = 20;
+                                    let viewport_width = self.viewports.text_viewport.width as usize;
+                                    let max_scroll_x = (self.grid.width + padding).saturating_sub(viewport_width);
+                                    self.grid.scroll_x = x.min(max_scroll_x);
+                                } else {
+                                    // Vertical scrolling with limits
+                                    let padding = 20;
+                                    let viewport_height = self.viewports.text_viewport.height.saturating_sub(1) as usize;
+                                    let max_scroll_y = (self.grid.height + padding).saturating_sub(viewport_height);
+                                    self.grid.scroll_y = y.min(max_scroll_y);
+                                }
                                                     self.viewports.text_viewport.mark_dirty();
                                 needs_redraw = true;
                             }
@@ -1096,18 +1155,26 @@ impl UIRenderer {
                 }
             }
             MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
-                // Horizontal scrolling
-                let (handled, action) = self.mouse_handler.handle_scroll(&event, true);
-                if handled {
-                    match action {
-                        ScrollAction::TextScroll(x, _y) => {
-                            self.grid.scroll_x = x;
-                                            self.viewports.text_viewport.mark_dirty();
-                            needs_redraw = true;
-                        }
-                        _ => {}
-                    }
+                // Horizontal scrolling - always scroll the text editor regardless of mouse position
+                let scroll_amount = 5;
+                
+                // Allow scrolling with padding: can scroll 20 cells past content edges
+                let padding = 20;
+                
+                if matches!(event.kind, MouseEventKind::ScrollLeft) {
+                    // Scroll left (decrease scroll_x, minimum is 0 - no negative scrolling)
+                    self.grid.scroll_x = self.grid.scroll_x.saturating_sub(scroll_amount);
+                } else {
+                    // ScrollRight - allow scrolling past content with padding
+                    let viewport_width = self.viewports.text_viewport.width as usize;
+                    // Maximum scroll position: content width + padding - viewport width
+                    let max_scroll = (self.grid.width + padding).saturating_sub(viewport_width);
+                    
+                    self.grid.scroll_x = (self.grid.scroll_x + scroll_amount).min(max_scroll);
                 }
+                
+                self.viewports.text_viewport.mark_dirty();
+                needs_redraw = true;
             }
             MouseEventKind::Down(MouseButton::Left) | 
             MouseEventKind::Drag(MouseButton::Left) | 
@@ -1142,20 +1209,28 @@ impl UIRenderer {
         };
         
         let split_col = term_width / 2;
-        let max_grid_width = (term_width - split_col - 4) as usize; // Available width for grid
         
         // Only handle if click is in the right panel
         if event.column >= split_col + 2 {  // +2 for border and padding
-            let grid_col = (event.column - split_col - 2) as usize;
-            let grid_row = event.row.saturating_sub(2) as usize;  // -2 for header
+            // Convert screen coordinates to display coordinates
+            let display_col = (event.column - split_col - 2) as usize;
+            let display_row = event.row.saturating_sub(2) as usize;  // -2 for header
             
-            // Clamp grid_col to the visible area width
-            let grid_col = grid_col.min(max_grid_width.saturating_sub(1));
+            // Add scroll offsets to get actual grid position
+            let grid_col = display_col + self.grid.scroll_x;
+            let grid_row = display_row + self.grid.scroll_y;
+            
+            // Clamp to actual grid bounds (not just visible area)
+            let grid_col = grid_col.min(self.grid.width.saturating_sub(1));
+            let grid_row = grid_row.min(self.grid.height.saturating_sub(1));
             
             use crossterm::event::MouseEventKind;
             match event.kind {
                 MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-                    self.grid.handle_mouse_down(grid_col, grid_row);
+                    let vp = &self.viewports.text_viewport;
+                    let viewport_width = vp.width as usize;
+                    let viewport_height = vp.height.saturating_sub(1) as usize;
+                    self.grid.handle_mouse_down_with_viewport(grid_col, grid_row, viewport_width, viewport_height);
                     self.viewports.text_viewport.mark_dirty();  // Mark for redraw when selection starts
                 }
                 MouseEventKind::Drag(crossterm::event::MouseButton::Left) => {
@@ -1163,7 +1238,10 @@ impl UIRenderer {
                     self.viewports.text_viewport.mark_dirty();  // Mark for redraw during selection
                 }
                 MouseEventKind::Up(crossterm::event::MouseButton::Left) => {
-                    self.grid.handle_mouse_up(grid_col, grid_row);
+                    let vp = &self.viewports.text_viewport;
+                    let viewport_width = vp.width as usize;
+                    let viewport_height = vp.height.saturating_sub(1) as usize;
+                    self.grid.handle_mouse_up_with_viewport(grid_col, grid_row, viewport_width, viewport_height);
                     self.viewports.text_viewport.mark_dirty();  // Mark for redraw when selection ends
                 }
                 _ => {}
@@ -1208,6 +1286,7 @@ impl UIRenderer {
         match self.current_screen {
             Screen::FilePicker => "File Picker", 
             Screen::PdfViewer => "PDF Viewer",
+            Screen::DebugViewer => "Debug Viewer",
         }
     }
     
@@ -1216,6 +1295,16 @@ impl UIRenderer {
         self.debug_messages.clear();
         self.debug_scroll_offset = 0;
         self.image_sent = false; // Reset flag for new PDF
+        
+        // Reset scroll states for new PDF
+        self.grid.scroll_x = 0;
+        self.grid.scroll_y = 0;
+        
+        // Update mouse handler dimensions and reset scroll states for new PDF
+        let (width, height) = terminal::size().unwrap_or((80, 24));
+        self.mouse_handler.update_dimensions(width, height);
+        self.mouse_handler.text_scroll_x = 0;
+        self.mouse_handler.text_scroll_y = 0;
         
         // Mark all viewports as dirty for new PDF
         self.viewports.pdf_viewport.mark_dirty();
@@ -1325,6 +1414,10 @@ impl UIRenderer {
         
         // Update Excel grid with the extracted text
         self.grid = Grid::from_pdftext(&text_with_metadata, grid_width.max(40));
+        
+        // Set the viewport size on the new grid
+        let vp = &self.viewports.text_viewport;
+        self.grid.set_viewport_size(vp.width as usize, vp.height.saturating_sub(1) as usize);
         
         // Update state
         self.current_pdf_path = Some(pdf_path);

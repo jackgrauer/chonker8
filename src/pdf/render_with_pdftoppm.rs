@@ -46,8 +46,8 @@ impl SystemPdfRenderer {
                 "-l", &page.to_string(),   // Last page (same as first for single page)
                 "-scale-to-x", &width.to_string(),   // Scale to width
                 "-scale-to-y", &height.to_string(),  // Scale to height
-                pdf_path.to_str().unwrap_or(""),     // Input PDF
-                output_prefix.to_str().unwrap_or(""),     // Output prefix
+                pdf_path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid PDF path"))?,     // Input PDF
+                output_prefix.to_str().ok_or_else(|| anyhow::anyhow!("Invalid output path"))?,     // Output prefix
             ])
             .output() {
                 Ok(output) => output,
@@ -76,42 +76,57 @@ impl SystemPdfRenderer {
         }
         
         // Find the generated PNG file
-        // pdftoppm uses 4-digit padding: page-0001.png, page-0002.png, etc.
-        let output_file = temp_dir.path().join(format!("page-{:04}.png", page));
+        // pdftoppm uses different padding based on total page count:
+        // - 1-99 pages: page-01.png, page-02.png (2 digits)
+        // - 100-999 pages: page-001.png, page-002.png (3 digits)  
+        // - 1000+ pages: page-0001.png, page-0002.png (4 digits)
         
-        if !output_file.exists() {
-            // Try older format without padding (for compatibility)
-            let alt_file = temp_dir.path().join(format!("page-{}.png", page));
-            if alt_file.exists() {
-                // Found the file in older format (page-1.png instead of page-0001.png)
-                let image = image::open(&alt_file)?;
+        // Try different naming patterns in order of most common
+        let possible_files = vec![
+            temp_dir.path().join(format!("page-{:02}.png", page)),   // 2-digit (most common)
+            temp_dir.path().join(format!("page-{:03}.png", page)),   // 3-digit
+            temp_dir.path().join(format!("page-{:04}.png", page)),   // 4-digit
+            temp_dir.path().join(format!("page-{}.png", page)),      // no padding
+        ];
+        
+        let output_file = possible_files.iter()
+            .find(|f| f.exists())
+            .cloned();
+            
+        if let Some(output_file) = output_file {
+            // eprintln!("[SYSTEM] Loading rendered page from {:?}", output_file);
+            let image = image::open(&output_file)?;
+            
+            // Convert white backgrounds to pure black to match terminal
+            use image::{Rgba, ImageBuffer};
+            let rgba_image = image.to_rgba8();
+            let (width, height) = rgba_image.dimensions();
+            
+            let mut black_bg_image = ImageBuffer::new(width, height);
+            
+            for (x, y, pixel) in rgba_image.enumerate_pixels() {
+                let Rgba([r, g, b, a]) = *pixel;
                 
-                // Convert white backgrounds to pure black to match terminal
-                use image::{Rgba, ImageBuffer};
-                let rgba_image = image.to_rgba8();
-                let (width, height) = rgba_image.dimensions();
+                // Full inversion for dark mode: 
+                // - White/light backgrounds become pure black
+                // - Black text becomes white
+                // - Gray values are inverted for consistency
+                let inverted_r = 255 - r;
+                let inverted_g = 255 - g;
+                let inverted_b = 255 - b;
                 
-                let mut black_bg_image = ImageBuffer::new(width, height);
-                
-                for (x, y, pixel) in rgba_image.enumerate_pixels() {
-                    let Rgba([r, g, b, a]) = *pixel;
-                    
-                    // Full inversion for dark mode: 
-                    // - White/light backgrounds become pure black
-                    // - Black text becomes white
-                    // - Gray values are inverted for consistency
-                    let inverted_r = 255 - r;
-                    let inverted_g = 255 - g;
-                    let inverted_b = 255 - b;
-                    
-                    black_bg_image.put_pixel(x, y, Rgba([inverted_r, inverted_g, inverted_b, a]));
-                }
-                
-                let final_image = DynamicImage::ImageRgba8(black_bg_image);
-                // eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{}", final_image.width(), final_image.height());
-                return Ok(final_image);
+                black_bg_image.put_pixel(x, y, Rgba([inverted_r, inverted_g, inverted_b, a]));
             }
             
+            let final_image = DynamicImage::ImageRgba8(black_bg_image);
+            
+            // Save a debug copy
+            final_image.save("/tmp/system_render_output.png").ok();
+            // eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{} - saved to /tmp/system_render_output.png", 
+            //          final_image.width(), final_image.height());
+            
+            Ok(final_image)
+        } else {
             // Debug: list what files were actually created
             let mut files_found = Vec::new();
             if let Ok(entries) = std::fs::read_dir(temp_dir.path()) {
@@ -123,45 +138,11 @@ impl SystemPdfRenderer {
             }
             
             return Err(anyhow::anyhow!(
-                "pdftoppm output file not found.\nExpected: {}\nAlternate: {}\nFiles created: {:?}", 
-                output_file.file_name().unwrap_or_default().to_string_lossy(),
-                alt_file.file_name().unwrap_or_default().to_string_lossy(),
+                "pdftoppm output file not found.\nTried patterns: page-{:02}.png, page-{:03}.png, page-{:04}.png, page-{}.png\nFiles created: {:?}", 
+                page, page, page, page,
                 files_found
             ));
         }
-        
-        // eprintln!("[SYSTEM] Loading rendered page from {:?}", output_file);
-        let image = image::open(&output_file)?;
-        
-        // Convert white backgrounds to pure black to match terminal
-        use image::{Rgba, ImageBuffer};
-        let rgba_image = image.to_rgba8();
-        let (width, height) = rgba_image.dimensions();
-        
-        let mut black_bg_image = ImageBuffer::new(width, height);
-        
-        for (x, y, pixel) in rgba_image.enumerate_pixels() {
-            let Rgba([r, g, b, a]) = *pixel;
-            
-            // Full inversion for dark mode: 
-            // - White/light backgrounds become pure black
-            // - Black text becomes white
-            // - Gray values are inverted for consistency
-            let inverted_r = 255 - r;
-            let inverted_g = 255 - g;
-            let inverted_b = 255 - b;
-            
-            black_bg_image.put_pixel(x, y, Rgba([inverted_r, inverted_g, inverted_b, a]));
-        }
-        
-        let final_image = DynamicImage::ImageRgba8(black_bg_image);
-        
-        // Save a debug copy
-        final_image.save("/tmp/system_render_output.png").ok();
-        // eprintln!("[SYSTEM] ✅ Page rendered successfully: {}x{} - saved to /tmp/system_render_output.png", 
-        //          final_image.width(), final_image.height());
-        
-        Ok(final_image)
     }
     
     /// Create an error image with a message when PDF rendering fails
@@ -175,20 +156,26 @@ impl SystemPdfRenderer {
         let mut img = ImageBuffer::from_pixel(width, height, Rgba([0u8, 0u8, 0u8, 255u8]));
         
         // Draw a simple border
+        // Fix: Use saturating arithmetic to prevent underflow
         for x in 0..width {
             img.put_pixel(x, 0, Rgba([64, 64, 64, 255]));
-            img.put_pixel(x, height - 1, Rgba([64, 64, 64, 255]));
+            if height > 0 {
+                img.put_pixel(x, height.saturating_sub(1), Rgba([64, 64, 64, 255]));
+            }
         }
         for y in 0..height {
             img.put_pixel(0, y, Rgba([64, 64, 64, 255]));
-            img.put_pixel(width - 1, y, Rgba([64, 64, 64, 255]));
+            if width > 0 {
+                img.put_pixel(width.saturating_sub(1), y, Rgba([64, 64, 64, 255]));
+            }
         }
         
         // Add error text in center (simplified - just a colored rectangle for now)
-        let text_width = message.len() as u32 * 8;
+        // Fix: Use saturating arithmetic to prevent underflow
+        let text_width = (message.len() as u32).saturating_mul(8);
         let text_height = 16;
-        let text_x = (width - text_width.min(width - 20)) / 2;
-        let text_y = (height - text_height) / 2;
+        let text_x = width.saturating_sub(text_width.min(width.saturating_sub(20))) / 2;
+        let text_y = height.saturating_sub(text_height) / 2;
         
         // Draw a dark red background for the error message
         for y in text_y..(text_y + text_height).min(height) {
@@ -201,10 +188,12 @@ impl SystemPdfRenderer {
         
         // Draw some placeholder "text" pixels (simplified rendering)
         // In a real implementation, you'd use a font rendering library
-        for (i, _) in message.chars().enumerate().take(((width - 40) / 8) as usize) {
-            let px = text_x + 4 + (i as u32 * 8);
-            let py = text_y + 4;
-            if px < width - 4 && py < height - 4 {
+        // Fix: Use saturating arithmetic to prevent underflow
+        let max_chars = width.saturating_sub(40) / 8;
+        for (i, _) in message.chars().enumerate().take(max_chars as usize) {
+            let px = text_x.saturating_add(4).saturating_add(i as u32 * 8);
+            let py = text_y.saturating_add(4);
+            if px < width.saturating_sub(4) && py < height.saturating_sub(4) {
                 // Draw a simple dot pattern to indicate text
                 img.put_pixel(px, py, Rgba([255, 128, 128, 255]));
                 img.put_pixel(px + 1, py, Rgba([255, 128, 128, 255]));
