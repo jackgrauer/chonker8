@@ -10,7 +10,8 @@ A lightweight (~5,000 lines), high-performance terminal-based PDF viewer with sp
 - **Hot Reload**: Automatic rebuild and UI refresh during development (chonker8-hot)
 - **Large PDF Support**: Handles massive PDFs with timeouts and proper error handling
 - **File Browser**: Built-in fuzzy file picker for PDF selection
-- **Excel-Style Grid**: Navigate extracted text in a grid format
+- **Rope-Based Text Engine**: Efficient text editing with O(log n) operations for large PDFs
+- **Excel-Style Grid**: Navigate extracted text in a spreadsheet-like interface
 - **Dark Mode**: Automatic color inversion for terminal-friendly viewing
 - **Viewport Management**: Independent rendering regions prevent UI corruption
 - **Cross-Platform**: Works on macOS, Linux, and Windows
@@ -158,7 +159,8 @@ chonker8/
 ### Key Components
 
 - **PDF Rendering**: Uses system's `pdftoppm` with timeout protection for large files
-- **Text Extraction**: `pdftotext` with automatic OCR fallback for scanned PDFs
+- **Text Extraction**: `pdftotext` with automatic OCR fallback for scanned PDFs (tried pdftohtml but had issues)
+- **Rope Text Engine**: Ropey-based text handling with O(log n) operations and incremental rendering
 - **Viewport System**: Independent rendering regions prevent UI corruption
 - **Terminal UI**: Crossterm for cross-platform terminal manipulation
 - **Kitty Graphics**: Native image display in Kitty terminals
@@ -168,14 +170,15 @@ chonker8/
 ## Version History
 
 ### v8.9.0 (Current)
-- Added viewport abstraction to prevent UI corruption
-- Implemented timeout protection for large PDF files (700MB+)
-- Fixed pdftoppm output file detection (supports 4-digit padding)
-- Added OCR support with Tesseract for scanned PDFs
-- Improved error handling with debug output to `/tmp/chonker8_debug.txt`
-- Removed 1,177+ lines of dead code (ab_comparison modules, unused methods)
-- Fixed arrow key navigation in PDF viewer
-- Added hot-reload development mode (chonker8-hot)
+- **Major Text Engine Overhaul**: Implemented rope data structure for all text operations
+- **Performance Optimizations**: O(log n) text operations with incremental rendering
+- **Xi Editor-Inspired Architecture**: Dirty region tracking and view caching
+- **Helix-Compatible Rope Handling**: Fixed cursor movement and text editing bugs
+- **Direct Character Access**: Eliminated intermediate array generation for better performance
+- **Stable Release**: Refined from experimental pdftohtml exploration back to reliable pdftotext
+- Improved memory efficiency for large PDFs
+- Enhanced text editor with proper line boundary handling
+- Streamlined rendering pipeline with direct rope access
 
 ### v8.8.0
 - Complete removal of PDFium dependency

@@ -29,7 +29,7 @@ use hot_reload_manager::HotReloadManager;
 
 #[derive(Parser, Debug)]
 #[command(name = "chonker8-hot")]
-#[command(version = "8.8.0")]
+#[command(version = "8.9.0")]
 #[command(about = "A/B PDF comparison viewer - Visual quality assessment tool", long_about = None)]
 struct Args {
     /// PDF file to display for A/B comparison (left: rendered PDF, right: pdftotext extraction)
