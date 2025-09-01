@@ -1,361 +1,282 @@
-// Integrated file picker that runs within the TUI screen
+// Simple file browser with PDF highlighting
 use anyhow::Result;
 use crossterm::{
-    cursor::MoveTo,
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-    terminal::{Clear, ClearType},
+    terminal::{self, Clear, ClearType},
 };
-use nucleo::{Config, Nucleo, Utf32String};
-use std::io::{stdout, Write};
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::Arc;
+use std::{
+    fs,
+    io::{stdout, Write},
+    path::PathBuf,
+};
 
-pub struct IntegratedFilePicker {
-    nucleo: Nucleo<Arc<str>>,
+pub struct FileBrowser {
     files: Vec<String>,
+    current_dir: PathBuf,
     query: String,
     selected_index: usize,
+    max_visible: usize,
     scroll_offset: usize,
-    initialized: bool,
 }
 
-impl IntegratedFilePicker {
+pub enum FileBrowserResult {
+    Exit,
+    FileSelected(PathBuf),
+    SwitchToEditor,
+    HotReload,
+}
+
+impl FileBrowser {
     pub fn new() -> Result<Self> {
-        let files = find_pdf_files()?;
-        
-        let nucleo = Nucleo::<Arc<str>>::new(
-            Config::DEFAULT,
-            Arc::new(|| {}),
-            None,
-            1,
-        );
-
-        // Add all files as items
-        let injector = nucleo.injector();
-        for file in &files {
-            let file_arc: Arc<str> = Arc::from(file.as_str());
-            let _ = injector.push(file_arc.clone(), |data, cols: &mut [Utf32String]| {
-                cols[0] = data.as_ref().into();
-            });
-        }
-
-        Ok(Self {
-            nucleo,
-            files,
+        let current_dir = PathBuf::from("/Users/jack/Documents");
+        let mut browser = Self {
+            files: Vec::new(),
+            current_dir,
             query: String::new(),
             selected_index: 0,
+            max_visible: 20,
             scroll_offset: 0,
-            initialized: true,
-        })
+        };
+        
+        browser.scan_directory()?;
+        Ok(browser)
     }
-
-    pub fn render(&mut self, width: u16, height: u16) -> Result<()> {
-        if !self.initialized {
-            return Ok(());
-        }
-
-        // Clear the screen area
-        execute!(
-            stdout(),
-            Clear(ClearType::All),
-            MoveTo(0, 0)
-        )?;
-
-        // Draw header to match split screen style
-        execute!(
-            stdout(),
-            MoveTo(2, 0),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(" FILE BROWSER "),
-            ResetColor
-        )?;
-
-        // Draw search box with clean styling
-        execute!(
-            stdout(),
-            MoveTo(2, 2),
-            SetForegroundColor(Color::DarkGrey),
-            Print("Search: "),
-            SetForegroundColor(Color::White),
-            Print(&self.query),
-            SetForegroundColor(Color::DarkGrey),
-            Print("_"),
-            ResetColor
-        )?;
-
-        // Get filtered results
-        let snapshot = self.nucleo.snapshot();
-        let all_matches = snapshot.matched_items(..).collect::<Vec<_>>();
-
-        // Calculate display parameters
-        let max_path_width = (width as usize).saturating_sub(5);
-        let max_display_items = (height as usize).saturating_sub(9).min(15);
-
-        // Update scroll offset to keep selected item visible
-        if self.selected_index >= self.scroll_offset + max_display_items {
-            self.scroll_offset = self.selected_index.saturating_sub(max_display_items - 1);
-        } else if self.selected_index < self.scroll_offset {
-            self.scroll_offset = self.selected_index;
-        }
-
-        // Get visible matches with scrolling
-        let visible_matches = all_matches
-            .iter()
-            .skip(self.scroll_offset)
-            .take(max_display_items)
-            .collect::<Vec<_>>();
-
-        // Draw matches
-        for (display_i, item) in visible_matches.iter().enumerate() {
-            let actual_index = self.scroll_offset + display_i;
-            let path = item.data.as_ref();
-
-            // Strip common prefixes for cleaner display
-            // Fix: Use safe path slicing to prevent panic on short paths
-            let clean_path = if path.starts_with("/Users/jack/Downloads/") {
-                path.get(22..).unwrap_or(path) // Safe slice with fallback
-            } else if path.starts_with("/Users/jack/Desktop/") {
-                path.get(20..).unwrap_or(path) // Safe slice with fallback
-            } else if path.starts_with("/Users/jack/Documents/") {
-                path.get(22..).unwrap_or(path) // Safe slice with fallback
+    
+    fn get_file_color(&self, filename: &str) -> Color {
+        if filename.ends_with('/') {
+            if filename == "../" {
+                Color::DarkGrey  // Parent directory
             } else {
-                path
-            };
-
-            let line_pos = 4 + display_i as u16;
-
-            // Move to the correct line and clear it
-            execute!(
-                stdout(),
-                MoveTo(0, line_pos),
-                Clear(ClearType::CurrentLine)
-            )?;
-
-            // Force truncate to terminal width (respecting UTF-8 boundaries)
-            let display_str = if clean_path.len() > max_path_width {
-                if let Some(filename) = clean_path.split('/').last() {
-                    if filename.len() <= max_path_width - 4 {
-                        format!(".../{}", filename)
+                Color::Cyan      // Regular directory
+            }
+        } else if filename.to_lowercase().ends_with(".pdf") {
+            Color::Green         // PDF files - highlighted in green
+        } else {
+            Color::White         // Other files
+        }
+    }
+    
+    fn scan_directory(&mut self) -> Result<()> {
+        self.files.clear();
+        
+        // Add parent directory if not at root
+        if self.current_dir.parent().is_some() {
+            self.files.push("../".to_string());
+        }
+        
+        // Read directory entries
+        if let Ok(entries) = fs::read_dir(&self.current_dir) {
+            let mut dirs = Vec::new();
+            let mut files = Vec::new();
+            
+            for entry in entries.flatten() {
+                let file_name = entry.file_name();
+                let file_str = file_name.to_string_lossy().to_string();
+                
+                // Skip hidden files
+                if file_str.starts_with('.') && file_str != ".." {
+                    continue;
+                }
+                
+                if entry.path().is_dir() {
+                    dirs.push(format!("{}/", file_str));
+                } else if file_str.to_lowercase().ends_with(".pdf") {
+                    files.push(file_str);
+                }
+            }
+            
+            // Sort and combine
+            dirs.sort();
+            files.sort();
+            self.files.extend(dirs);
+            self.files.extend(files);
+        }
+        
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+        Ok(())
+    }
+    
+    pub fn run(&mut self) -> Result<FileBrowserResult> {
+        self.render()?;
+        
+        if let Event::Key(key) = event::read()? {
+            match self.handle_key(key)? {
+                KeyResult::Continue => Ok(FileBrowserResult::FileSelected(PathBuf::new())), // Will loop back
+                KeyResult::Exit => Ok(FileBrowserResult::Exit),
+                KeyResult::Select(path) => Ok(FileBrowserResult::FileSelected(path)),
+                KeyResult::SwitchToEditor => Ok(FileBrowserResult::SwitchToEditor),
+                KeyResult::HotReload => Ok(FileBrowserResult::HotReload),
+            }
+        } else {
+            Ok(FileBrowserResult::FileSelected(PathBuf::new())) // Will loop back
+        }
+    }
+    
+    fn handle_key(&mut self, key: KeyEvent) -> Result<KeyResult> {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                return Ok(KeyResult::Exit);
+            }
+            KeyCode::Tab => {
+                return Ok(KeyResult::SwitchToEditor);
+            }
+            KeyCode::Enter => {
+                if let Some(selected_file) = self.get_selected_file() {
+                    let full_path = self.current_dir.join(&selected_file);
+                    
+                    if selected_file == "../" {
+                        // Go to parent directory
+                        if let Some(parent) = self.current_dir.parent() {
+                            self.current_dir = parent.to_path_buf();
+                            self.scan_directory()?;
+                        }
+                    } else if selected_file.ends_with('/') {
+                        // Enter directory
+                        let dir_name = &selected_file[..selected_file.len()-1];
+                        self.current_dir = self.current_dir.join(dir_name);
+                        self.scan_directory()?;
                     } else {
-                        // Truncate at character boundary, not byte boundary
-                        let max_chars = max_path_width.saturating_sub(3);
-                        let truncated: String = filename.chars().take(max_chars).collect();
-                        format!("{}...", truncated)
+                        // Select file
+                        return Ok(KeyResult::Select(full_path));
+                    }
+                }
+            }
+            KeyCode::Up => {
+                if self.selected_index > 0 {
+                    self.selected_index -= 1;
+                    self.update_scroll();
+                }
+            }
+            KeyCode::Down => {
+                let visible_count = self.get_visible_files().len();
+                if self.selected_index + 1 < visible_count {
+                    self.selected_index += 1;
+                    self.update_scroll();
+                }
+            }
+            KeyCode::Char(c) => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'c' => return Ok(KeyResult::Exit),
+                        'u' => {
+                            // Debug: write to a file to confirm key is detected
+                            std::fs::write("/tmp/chonker8_debug.txt", "Ctrl+U detected in file browser").ok();
+                            return Ok(KeyResult::HotReload);
+                        }
+                        _ => {}
                     }
                 } else {
-                    // Truncate at character boundary, not byte boundary
-                    let max_chars = max_path_width.saturating_sub(3);
-                    let truncated: String = clean_path.chars().take(max_chars).collect();
-                    format!("{}...", truncated)
+                    self.query.push(c);
+                    self.update_selection();
                 }
-            } else {
-                clean_path.to_string()
-            };
-
-            // Final safety check
-            let final_display: String = display_str.chars().take(max_path_width).collect();
-
-            if actual_index == self.selected_index {
+            }
+            KeyCode::Backspace => {
+                if !self.query.is_empty() {
+                    self.query.pop();
+                    self.update_selection();
+                }
+            }
+            _ => {}
+        }
+        
+        Ok(KeyResult::Continue)
+    }
+    
+    fn update_selection(&mut self) {
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+    }
+    
+    fn get_visible_files(&self) -> Vec<String> {
+        if self.query.is_empty() {
+            // Show all files
+            self.files.clone()
+        } else {
+            // Simple string matching (case insensitive)
+            let query_lower = self.query.to_lowercase();
+            self.files
+                .iter()
+                .filter(|f| f.to_lowercase().contains(&query_lower))
+                .cloned()
+                .collect()
+        }
+    }
+    
+    fn get_selected_file(&self) -> Option<String> {
+        let visible = self.get_visible_files();
+        visible.get(self.selected_index).cloned()
+    }
+    
+    fn update_scroll(&mut self) {
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        } else if self.selected_index >= self.scroll_offset + self.max_visible {
+            self.scroll_offset = self.selected_index - self.max_visible + 1;
+        }
+    }
+    
+    fn render(&mut self) -> Result<()> {
+        let (width, height) = terminal::size()?;
+        self.max_visible = (height as usize).saturating_sub(1); // Leave room for search line
+        
+        execute!(stdout(), Clear(ClearType::All))?;
+        
+        // Search input line at top with blinking cursor
+        execute!(
+            stdout(),
+            crossterm::cursor::MoveTo(0, 0),
+            Print(format!("{}█", self.query)) // Add blinking cursor block
+        )?;
+        
+        // File list starting from line 1
+        let visible_files = self.get_visible_files();
+        
+        for (i, file) in visible_files
+            .iter()
+            .skip(self.scroll_offset)
+            .take(self.max_visible)
+            .enumerate()
+        {
+            let file_index = self.scroll_offset + i;
+            let y = (i + 1) as u16; // Start from line 1
+            
+            let file_color = self.get_file_color(file);
+            
+            if file_index == self.selected_index {
                 execute!(
                     stdout(),
+                    crossterm::cursor::MoveTo(0, y),
+                    SetBackgroundColor(Color::Blue),
                     SetForegroundColor(Color::White),
-                    Print(" > "),
-                    SetBackgroundColor(Color::DarkBlue),
-                    SetForegroundColor(Color::White),
-                    Print(&final_display),
+                    Print(format!("{:<width$}", file, width = width as usize)),
                     ResetColor
                 )?;
             } else {
                 execute!(
                     stdout(),
-                    Print("   "),
-                    SetForegroundColor(Color::DarkGrey),
-                    Print(&final_display),
+                    crossterm::cursor::MoveTo(0, y),
+                    SetForegroundColor(file_color),
+                    Print(file),
                     ResetColor
                 )?;
             }
         }
-
-        // Clear any remaining lines
-        for i in visible_matches.len()..max_display_items {
-            let line_pos = 4 + i as u16;
-            execute!(
-                stdout(),
-                MoveTo(0, line_pos),
-                Clear(ClearType::CurrentLine)
-            )?;
-        }
-
-        // Draw status and help
-        let _help_line = height - 3;
-        let scroll_indicator = if all_matches.len() > max_display_items {
-            format!("  Showing {}-{} of {} files", 
-                self.scroll_offset + 1, 
-                (self.scroll_offset + visible_matches.len()).min(all_matches.len()), 
-                all_matches.len())
-        } else {
-            format!("  {} files", all_matches.len())
-        };
-
-        // Draw status bar at bottom
-        execute!(
-            stdout(),
-            MoveTo(0, height - 1),
-            SetBackgroundColor(Color::DarkBlue),
-            SetForegroundColor(Color::White),
-            Print(format!(" {:<width$} ", &scroll_indicator, width = width as usize - 2)),
-            ResetColor
-        )?;
         
-        execute!(
-            stdout(),
-            MoveTo(0, height - 2),
-            SetForegroundColor(Color::DarkGrey),
-            Print(" TAB: Next | ESC: Exit | UP/DOWN: Navigate | ENTER: Select"),
-            ResetColor
-        )?;
-
         stdout().flush()?;
-
-        // Let nucleo process
-        self.nucleo.tick(10);
-
         Ok(())
-    }
-
-    pub fn handle_char(&mut self, c: char) -> Result<()> {
-        self.query.push(c);
-        self.selected_index = 0;
-        self.scroll_offset = 0;
-        
-        // Update nucleo pattern
-        self.nucleo.pattern.reparse(
-            0,
-            &self.query,
-            nucleo::pattern::CaseMatching::Smart,
-            nucleo::pattern::Normalization::Smart,
-            false
-        );
-        
-        Ok(())
-    }
-
-    pub fn handle_backspace(&mut self) -> Result<()> {
-        self.query.pop();
-        self.selected_index = 0;
-        self.scroll_offset = 0;
-        
-        // Update nucleo pattern
-        self.nucleo.pattern.reparse(
-            0,
-            &self.query,
-            nucleo::pattern::CaseMatching::Smart,
-            nucleo::pattern::Normalization::Smart,
-            false
-        );
-        
-        Ok(())
-    }
-
-    pub fn handle_up(&mut self) -> Result<()> {
-        if self.selected_index > 0 {
-            self.selected_index -= 1;
-        }
-        Ok(())
-    }
-
-    pub fn handle_down(&mut self) -> Result<()> {
-        let snapshot = self.nucleo.snapshot();
-        let all_matches = snapshot.matched_items(..).collect::<Vec<_>>();
-        
-        if self.selected_index < all_matches.len().saturating_sub(1) {
-            self.selected_index += 1;
-        }
-        Ok(())
-    }
-
-    pub fn get_selected_file(&self) -> Option<PathBuf> {
-        let snapshot = self.nucleo.snapshot();
-        let all_matches = snapshot.matched_items(..).collect::<Vec<_>>();
-        
-        if self.selected_index < all_matches.len() {
-            let selected = all_matches[self.selected_index].data.as_ref();
-            // Fix: Validate path exists before returning it
-            let path = PathBuf::from(selected);
-            if path.exists() && path.is_file() {
-                Some(path)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
     }
 }
 
-/// Find all PDF files in current directory and subdirectories
-fn find_pdf_files() -> Result<Vec<String>> {
-    let search_dirs = [
-        "/Users/jack/Downloads",
-        "/Users/jack/Desktop", 
-        "/Users/jack/Documents",
-        "."
-    ];
-    
-    let mut all_files = Vec::new();
-    
-    for search_dir in &search_dirs {
-        let files = find_pdfs_in_dir(search_dir)?;
-        all_files.extend(files);
-    }
-    
-    // Remove duplicates while preserving order
-    all_files.sort();
-    all_files.dedup();
-    
-    Ok(all_files)
+enum KeyResult {
+    Continue,
+    Exit,
+    Select(PathBuf),
+    SwitchToEditor,
+    HotReload,
 }
 
-fn find_pdfs_in_dir(search_dir: &str) -> Result<Vec<String>> {
-    // Fix: Validate search directory exists before attempting to search
-    if !std::path::Path::new(search_dir).exists() {
-        return Ok(Vec::new());
-    }
-    
-    // Try using fd first (faster), fallback to find
-    let output = if command_exists("fd") {
-        Command::new("fd")
-            .args(&["-e", "pdf", "-t", "f", ".", search_dir])
-            .output()
-    } else {
-        // Fallback to find command
-        Command::new("find")
-            .args(&[search_dir, "-name", "*.pdf", "-type", "f"])
-            .output()
-    };
-    
-    match output {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let files: Vec<String> = stdout
-                .lines()
-                .map(|s| s.to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            Ok(files)
-        }
-        _ => Ok(Vec::new()) // Return empty vec on error
-    }
-}
-
-/// Check if a command exists
-fn command_exists(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
+// Re-import cursor for the render function
+use crossterm::cursor;
