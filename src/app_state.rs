@@ -41,18 +41,19 @@ impl AppState {
             execute,
             terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
             cursor::{Hide, Show},
+            event::{EnableMouseCapture, DisableMouseCapture},
         };
         use std::io::stdout;
         
-        // Enter alternate screen mode once
-        execute!(stdout(), EnterAlternateScreen, Hide)?;
+        // Enter alternate screen mode with mouse support
+        execute!(stdout(), EnterAlternateScreen, Hide, EnableMouseCapture)?;
         terminal::enable_raw_mode()?;
         
         let result = self.run_loop();
         
-        // Cleanup - exit alternate screen mode
+        // Cleanup - exit alternate screen mode with mouse
         terminal::disable_raw_mode()?;
-        execute!(stdout(), Show, LeaveAlternateScreen)?;
+        execute!(stdout(), Show, DisableMouseCapture, LeaveAlternateScreen)?;
         
         result
     }
@@ -145,7 +146,7 @@ impl AppState {
         
         // First, properly exit terminal mode
         terminal::disable_raw_mode()?;
-        execute!(stdout(), Show, terminal::LeaveAlternateScreen)?;
+        execute!(stdout(), Show, crossterm::event::DisableMouseCapture, terminal::LeaveAlternateScreen)?;
         
         // Then trigger the hot reload
         use crate::core::hot_reload::HotReloadManager;

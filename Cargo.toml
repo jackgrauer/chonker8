@@ -29,6 +29,13 @@ ropey = "1.6"
 # Syntax highlighting for file types
 syntect = "5.2"
 
+# Clipboard support for cut/copy/paste
+arboard = "3.3"
+
+# XML parsing for hybrid PDF extraction
+quick-xml = "0.38"
+tempfile = "3.8"
+
 [[bin]]
 name = "chonker8"
 path = "src/main.rs"
