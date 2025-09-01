@@ -8,12 +8,3 @@ pub mod core {
 
 // Display modules
 pub mod display;
-
-// Application state management
-pub mod app_state;
-
-// Storage
-pub mod storage;
-
-// Types
-pub mod types;

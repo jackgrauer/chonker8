@@ -20,8 +20,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # File utilities
 dirs = "5.0"
 
-# Terminal UI for file browser
-crossterm = "0.27"
+# GUI framework
+eframe = "0.29"
+egui = "0.29"
 
 # Efficient rope data structure for text editing
 ropey = "1.6"
@@ -29,7 +30,7 @@ ropey = "1.6"
 # Syntax highlighting for file types
 syntect = "5.2"
 
-# Clipboard support for cut/copy/paste
+# Clipboard support
 arboard = "3.3"
 
 # XML parsing for hybrid PDF extraction
