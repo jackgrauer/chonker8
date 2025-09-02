@@ -1,7 +1,6 @@
-// Simplified configuration structures
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use anyhow::Result;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
@@ -22,18 +21,13 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Result<Self> {
-        // Try to load from config.toml, or use defaults if it doesn't exist
-        if let Ok(content) = fs::read_to_string("config.toml") {
-            Ok(toml::from_str(&content)?)
-        } else {
-            // Return default config if config.toml doesn't exist
-            Ok(Self::default())
+        match fs::read_to_string("config.toml") {
+            Ok(content) => toml::from_str(&content).map_err(Into::into),
+            Err(_) => Ok(Self::default()),
         }
     }
     
     pub fn save(&self) -> Result<()> {
-        let content = toml::to_string_pretty(self)?;
-        fs::write("config.toml", content)?;
-        Ok(())
+        fs::write("config.toml", toml::to_string_pretty(self)?).map_err(Into::into)
     }
 }

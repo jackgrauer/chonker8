@@ -33,9 +33,10 @@ syntect = "5.2"
 # Clipboard support
 arboard = "3.3"
 
-# XML parsing for hybrid PDF extraction
+# HTML parsing and rendering
 quick-xml = "0.38"
 tempfile = "3.8"
+regex = "1.10"
 
 [[bin]]
 name = "chonker8"
