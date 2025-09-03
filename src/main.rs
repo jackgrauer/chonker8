@@ -137,8 +137,6 @@ impl App {
         if let Some(editor) = &mut self.editor {
             // Controls
             ui.horizontal(|ui| {
-                
-                
                 ui.separator();
                 
                 // Page navigation

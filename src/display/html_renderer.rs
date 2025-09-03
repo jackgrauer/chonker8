@@ -248,6 +248,23 @@ impl HtmlRenderer {
         self.pages.len()
     }
     
+    pub fn get_fontspec(&self, font_id: &str) -> Option<&FontSpec> {
+        self.fontspecs.get(font_id)
+    }
+    
+    pub fn get_text_elements(&self, page_index: usize) -> Vec<&HtmlElement> {
+        let mut page_elements = Vec::new();
+        self.find_page_elements(&self.elements, &mut page_elements);
+        
+        if let Some(page_elem) = page_elements.get(page_index) {
+            page_elem.children.iter()
+                .filter(|e| e.tag == "text" && !e.text.trim().is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+    
     fn find_page_elements<'a>(&self, elements: &'a [HtmlElement], page_elements: &mut Vec<&'a HtmlElement>) {
         for element in elements {
             if element.tag == "page" {
@@ -428,14 +445,6 @@ impl HtmlRenderer {
                     origin.y + element.style.top * scale,
                 );
                 
-                // Debug markers
-                painter.text(
-                    egui::pos2(pos.x - 60.0, pos.y),
-                    egui::Align2::LEFT_TOP,
-                    &format!("[{}]({:.0},{:.0})", element.tag, element.style.left, element.style.top),
-                    egui::FontId::monospace(7.0),
-                    egui::Color32::YELLOW,
-                );
                 
                 // Get font properties
                 let (font_size, color) = if let Some(font_id) = &element.style.font_id {
