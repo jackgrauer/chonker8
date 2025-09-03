@@ -86,6 +86,10 @@ impl TextEditor {
         self.text_cache.clone()
     }
     
+    pub fn get_xml_content(&self) -> String {
+        self.xml_cache.clone()
+    }
+    
     pub fn set_text(&mut self, text: String) {
         // Always edit the actual text content (not XML)
         if text != self.text_cache {

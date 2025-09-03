@@ -171,6 +171,19 @@ impl App {
                     self.file.as_ref().unwrap().file_name().unwrap().to_string_lossy()));
             });
             
+            // Raw XML dropdown
+            ui.collapsing("🔽 Raw XML", |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        let xml_content = editor.get_xml_content();
+                        ui.add(egui::TextEdit::multiline(&mut xml_content.as_str())
+                            .font(egui::TextStyle::Monospace)
+                            .code_editor()
+                            .desired_width(f32::INFINITY));
+                    });
+            });
+            
             ui.separator();
             
             // Render content based on mode
