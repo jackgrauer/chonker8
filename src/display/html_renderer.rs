@@ -28,24 +28,6 @@ pub struct PageInfo {
     pub height: f32,
 }
 
-#[derive(Debug, Clone)]
-pub struct TextBlock {
-    pub text: String,
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-    pub font_size: f32,
-    pub color: egui::Color32,
-    pub font_family: String,
-}
-
-pub struct PageLayout {
-    pub page_info: PageInfo,
-    pub text_blocks: Vec<TextBlock>,
-    pub occupied_areas: Vec<egui::Rect>,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct HtmlStyle {
     pub font_size: f32,
@@ -63,7 +45,6 @@ pub struct HtmlRenderer {
     elements: Vec<HtmlElement>,
     fontspecs: HashMap<String, FontSpec>,
     pages: Vec<PageInfo>,
-    page_layout: Option<PageLayout>,
     style_regex: Regex,
 }
 
@@ -73,7 +54,6 @@ impl HtmlRenderer {
             elements: Vec::new(),
             fontspecs: HashMap::new(),
             pages: Vec::new(),
-            page_layout: None,
             style_regex: Regex::new(r"(\w+):\s*([^;]+)").unwrap(),
         }
     }
@@ -109,14 +89,11 @@ impl HtmlRenderer {
                             self.pages.push(page);
                         }
                         "b" | "i" | "em" | "strong" => {
-                            // For inline formatting tags, don't create separate elements
-                            // Just continue with current element
                             continue;
                         }
                         _ => {}
                     }
                     
-                    // Create element for everything except inline formatting
                     let element = HtmlElement {
                         tag: tag_name.clone(),
                         text: String::new(),
@@ -129,8 +106,6 @@ impl HtmlRenderer {
                 }
                 Ok(Event::End(ref e)) => {
                     let tag_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                    
-                    // Skip end tags for inline formatting
                     if matches!(tag_name.as_str(), "b" | "i" | "em" | "strong") {
                         continue;
                     }
@@ -165,66 +140,9 @@ impl HtmlRenderer {
         Ok(())
     }
     
-    
-    fn build_page_layout(&mut self) {
-        if let Some(page_info) = self.pages.first().cloned() {
-            let mut text_blocks = Vec::new();
-            let mut occupied_areas = Vec::new();
-            
-            // Convert all text elements to unified text blocks
-            self.collect_text_blocks(&self.elements, &mut text_blocks, &mut occupied_areas);
-            
-            self.page_layout = Some(PageLayout {
-                page_info,
-                text_blocks,
-                occupied_areas,
-            });
-        }
-    }
-    
-    fn collect_text_blocks(&self, elements: &[HtmlElement], blocks: &mut Vec<TextBlock>, areas: &mut Vec<egui::Rect>) {
-        for element in elements {
-            if element.tag == "text" && !element.text.trim().is_empty() {
-                // Get font properties
-                let (font_size, color, font_family) = if let Some(font_id) = &element.style.font_id {
-                    if let Some(fontspec) = self.fontspecs.get(font_id) {
-                        (fontspec.size, fontspec.color, fontspec.family.clone())
-                    } else {
-                        (12.0, egui::Color32::from_rgb(220, 220, 220), "Arial".to_string())
-                    }
-                } else {
-                    (12.0, egui::Color32::from_rgb(220, 220, 220), "Arial".to_string())
-                };
-                
-                let text_block = TextBlock {
-                    text: element.text.clone(),
-                    x: element.style.left,
-                    y: element.style.top,
-                    width: element.style.width,
-                    height: element.style.height,
-                    font_size,
-                    color,
-                    font_family,
-                };
-                
-                // Track occupied area for overlap detection
-                let area = egui::Rect::from_min_size(
-                    egui::pos2(element.style.left, element.style.top),
-                    egui::vec2(element.style.width, element.style.height)
-                );
-                
-                blocks.push(text_block);
-                areas.push(area);
-            }
-            
-            // Recurse through children
-            self.collect_text_blocks(&element.children, blocks, areas);
-        }
-    }
-    
     fn parse_xml_attributes(&self, attributes: quick_xml::events::attributes::Attributes) -> Result<HtmlStyle> {
         let mut style = HtmlStyle::default();
-        style.color = egui::Color32::from_rgb(220, 220, 220); // Default text color
+        style.color = egui::Color32::from_rgb(220, 220, 220);
         
         for attr in attributes {
             let attr = attr?;
@@ -250,7 +168,6 @@ impl HtmlRenderer {
                 "height" => {
                     if let Ok(height) = value.parse::<f32>() {
                         style.height = height;
-                        // Don't use height as font size - get it from fontspec instead
                     }
                 }
                 "font" => {
@@ -336,7 +253,6 @@ impl HtmlRenderer {
             if element.tag == "page" {
                 page_elements.push(element);
             }
-            // Recurse through children
             self.find_page_elements(&element.children, page_elements);
         }
     }
@@ -350,19 +266,6 @@ impl HtmlRenderer {
             }
             self.count_elements(&element.children, text_count, page_count);
         }
-    }
-    
-    fn get_page_number(&self, element: &HtmlElement) -> usize {
-        // For now, just use the page index from the pages vector
-        // since we're storing pages in order
-        if element.tag == "page" {
-            // Find which page this is by comparing with stored pages
-            for (index, _) in self.pages.iter().enumerate() {
-                // This is a simplified approach - match by index
-                return index + 1;
-            }
-        }
-        0
     }
     
     fn parse_css_style(&self, css: &str, mut style: HtmlStyle) -> HtmlStyle {
@@ -379,26 +282,6 @@ impl HtmlRenderer {
                 "color" => {
                     if let Some(color) = self.parse_color(value) {
                         style.color = color;
-                    }
-                }
-                "left" => {
-                    if let Ok(left) = value.trim_end_matches("px").parse::<f32>() {
-                        style.left = left;
-                    }
-                }
-                "top" => {
-                    if let Ok(top) = value.trim_end_matches("px").parse::<f32>() {
-                        style.top = top;
-                    }
-                }
-                "width" => {
-                    if let Ok(width) = value.trim_end_matches("px").parse::<f32>() {
-                        style.width = width;
-                    }
-                }
-                "height" => {
-                    if let Ok(height) = value.trim_end_matches("px").parse::<f32>() {
-                        style.height = height;
                     }
                 }
                 "font-weight" => {
@@ -423,7 +306,6 @@ impl HtmlRenderer {
                 return Some(egui::Color32::from_rgb(r, g, b));
             }
         } else if color_str.starts_with("rgb(") {
-            // Basic RGB parsing - could be expanded
             let rgb_str = color_str.trim_start_matches("rgb(").trim_end_matches(')');
             let parts: Vec<&str> = rgb_str.split(',').collect();
             if parts.len() == 3 {
@@ -455,11 +337,10 @@ impl HtmlRenderer {
         
         // Debug: parsing summary panel
         ui.collapsing("⚙️ Parsing Summary", |ui| {
-            ui.visuals_mut().extreme_bg_color = egui::Color32::from_rgb(20, 40, 20); // Green tint
+            ui.visuals_mut().extreme_bg_color = egui::Color32::from_rgb(20, 40, 20);
             egui::ScrollArea::vertical()
                 .max_height(100.0)
                 .show(ui, |ui| {
-                    // Get page info first
                     let mut page_elements = Vec::new();
                     self.find_page_elements(&self.elements, &mut page_elements);
                     
@@ -493,16 +374,13 @@ impl HtmlRenderer {
         self.find_page_elements(&self.elements, &mut page_elements);
         
         if let Some(page_elem) = page_elements.get(page_index) {
-            
-            // Debug: scrollable text content preview
             ui.collapsing("🔍 Parsed Elements", |ui| {
-                ui.visuals_mut().extreme_bg_color = egui::Color32::from_rgb(40, 20, 20); // Red tint
+                ui.visuals_mut().extreme_bg_color = egui::Color32::from_rgb(40, 20, 20);
                 egui::ScrollArea::vertical()
                     .max_height(150.0)
                     .show(ui, |ui| {
                         let mut debug_text = String::new();
                         for (i, child) in page_elem.children.iter().enumerate() {
-                            // Show ALL children, even empty ones, to see what we're missing
                             let text_preview = if child.text.trim().is_empty() {
                                 "[EMPTY]".to_string()
                             } else {
@@ -543,22 +421,14 @@ impl HtmlRenderer {
     }
     
     fn render_pdf_page(&self, ui: &mut egui::Ui, elements: &[HtmlElement], scale: f32, origin: egui::Pos2, painter: &egui::Painter) {
-        // Get page dimensions for coordinate transformation
-        let page_height = if let Some(page) = self.pages.first() {
-            page.height
-        } else {
-            792.0 // Default page height
-        };
-        
         for element in elements {
-            // Render ANY element with content (not just "text" tags) 
             if !element.text.trim().is_empty() {
                 let pos = egui::pos2(
                     origin.x + element.style.left * scale,
                     origin.y + element.style.top * scale,
                 );
                 
-                // Debug: show element type and coordinates
+                // Debug markers
                 painter.text(
                     egui::pos2(pos.x - 60.0, pos.y),
                     egui::Align2::LEFT_TOP,
@@ -567,22 +437,18 @@ impl HtmlRenderer {
                     egui::Color32::YELLOW,
                 );
                 
-                // Get proper font size from fontspec (not element height)
+                // Get font properties
                 let (font_size, color) = if let Some(font_id) = &element.style.font_id {
                     if let Some(fontspec) = self.fontspecs.get(font_id) {
                         (fontspec.size * scale, egui::Color32::WHITE)
                     } else {
-                        // Fallback: use element height as rough font size approximation, but scale it properly
                         (element.style.height * scale * 0.8, egui::Color32::WHITE)
                     }
                 } else {
-                    (element.style.height * scale * 0.8, egui::Color32::WHITE)
+                    (12.0 * scale, egui::Color32::WHITE)
                 };
                 
-                // Draw small position marker for debugging
-                painter.circle_filled(pos, 2.0, egui::Color32::RED);
-                
-                // Draw text at transformed position
+                // Render text
                 painter.text(
                     pos,
                     egui::Align2::LEFT_TOP,
@@ -592,207 +458,8 @@ impl HtmlRenderer {
                 );
             }
             
-            // Recurse through children
             self.render_pdf_page(ui, &element.children, scale, origin, painter);
         }
-    }
-    
-    fn render_spatial_layout(&self, ui: &mut egui::Ui) {
-        if let Some(page_layout) = &self.page_layout {
-            let page_info = &page_layout.page_info;
-            
-            // Use large fixed scale for readability
-            let scale = 2.5; // Even bigger for better spacing
-            
-            // Create large canvas based on actual page dimensions
-            let canvas_size = egui::vec2(page_info.width * scale, page_info.height * scale);
-            
-            // Allocate painter for the entire page
-            let (response, painter) = ui.allocate_painter(canvas_size, egui::Sense::click());
-            let canvas_rect = response.rect;
-            
-            // Draw page background
-            painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_rgb(12, 12, 12));
-            
-            // Render all text blocks as one cohesive page
-            for text_block in &page_layout.text_blocks {
-                self.render_text_block(ui, text_block, scale, canvas_rect.min, &painter);
-            }
-        } else {
-            ui.label("No page layout available");
-        }
-    }
-    
-    fn render_text_block(&self, ui: &mut egui::Ui, block: &TextBlock, scale: f32, origin: egui::Pos2, painter: &egui::Painter) {
-        // Get page height for coordinate transformation
-        let page_height = if let Some(page) = self.pages.first() {
-            page.height
-        } else {
-            792.0
-        };
-        
-        // Calculate scaled position with PDF-to-screen coordinate transformation
-        let pos = egui::pos2(
-            origin.x + block.x * scale,
-            origin.y + (page_height - block.y - block.height) * scale,
-        );
-        
-        // Calculate scaled size
-        let size = egui::vec2(
-            block.width * scale,
-            block.height * scale,
-        );
-        
-        let text_rect = egui::Rect::from_min_size(pos, size);
-        
-        // Render text at exact position with proper font
-        painter.text(
-            pos,
-            egui::Align2::LEFT_TOP,
-            &block.text,
-            egui::FontId::proportional(block.font_size * scale),
-            block.color,
-        );
-        
-        // Make it clickable for editing
-        let response = ui.allocate_rect(text_rect, egui::Sense::click());
-        
-        if response.hovered() {
-            painter.rect_stroke(text_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::YELLOW));
-        }
-        
-        if response.clicked() {
-            // Handle editing (could add edit state here)
-        }
-    }
-    
-    fn render_positioned_text(&self, ui: &mut egui::Ui, element: &HtmlElement, scale: f32, origin: egui::Pos2, painter: &egui::Painter) {
-        if element.tag == "text" && !element.text.trim().is_empty() {
-            // Get page height for coordinate transformation
-            let page_height = if let Some(page) = self.pages.first() {
-                page.height
-            } else {
-                792.0
-            };
-            
-            // Calculate exact position with PDF-to-screen coordinate transformation
-            let pos = egui::pos2(
-                origin.x + element.style.left * scale,
-                origin.y + (page_height - element.style.top - element.style.height) * scale,
-            );
-            
-            // Get font properties from fontspec
-            let (font_size, color) = if let Some(font_id) = &element.style.font_id {
-                if let Some(fontspec) = self.fontspecs.get(font_id) {
-                    (fontspec.size * scale, fontspec.color)
-                } else {
-                    (12.0 * scale, egui::Color32::from_rgb(220, 220, 220))
-                }
-            } else {
-                (12.0 * scale, egui::Color32::from_rgb(220, 220, 220))
-            };
-            
-            // Create invisible button for click detection
-            let text_size = egui::vec2(element.style.width * scale, element.style.height * scale);
-            let text_rect = egui::Rect::from_min_size(pos, text_size);
-            
-            let text_response = ui.allocate_rect(text_rect, egui::Sense::click());
-            
-            // Paint the text at exact coordinates
-            painter.text(
-                pos,
-                egui::Align2::LEFT_TOP,
-                &element.text,
-                egui::FontId::proportional(font_size),
-                color,
-            );
-            
-            // Show edit indicator if hovered
-            if text_response.hovered() {
-                painter.rect_stroke(text_rect, 0.0, egui::Stroke::new(1.0, egui::Color32::YELLOW));
-            }
-            
-            // Handle click for editing (would need to implement editing state)
-            if text_response.clicked() {
-                // Could switch to edit mode for this text element
-            }
-        }
-        
-        // Render children
-        for child in &element.children {
-            self.render_positioned_text(ui, child, scale, origin, painter);
-        }
-    }
-    
-    fn collect_text_elements(&self, elements: &[HtmlElement], collector: &mut Vec<HtmlElement>) {
-        for element in elements {
-            if element.tag == "text" {
-                collector.push(element.clone());
-            }
-            self.collect_text_elements(&element.children, collector);
-        }
-    }
-    
-    fn render_positioned_element(&self, ui: &mut egui::Ui, element: &HtmlElement, scale: f32, canvas_origin: egui::Pos2) -> Option<String> {
-        let mut edited_text = None;
-        
-        if element.tag == "text" && !element.text.trim().is_empty() {
-            // Get page height for coordinate transformation
-            let page_height = if let Some(page) = self.pages.first() {
-                page.height
-            } else {
-                792.0
-            };
-            
-            // Calculate scaled position and size with PDF-to-screen coordinate transformation
-            let pos = egui::pos2(
-                canvas_origin.x + element.style.left * scale,
-                canvas_origin.y + (page_height - element.style.top - element.style.height) * scale,
-            );
-            
-            let size = egui::vec2(
-                element.style.width * scale,
-                element.style.height * scale,
-            );
-            
-            // Get font info
-            let (font_size, font_color) = if let Some(font_id) = &element.style.font_id {
-                if let Some(fontspec) = self.fontspecs.get(font_id) {
-                    (fontspec.size * scale, fontspec.color)
-                } else {
-                    (element.style.font_size * scale, element.style.color)
-                }
-            } else {
-                (element.style.font_size * scale, element.style.color)
-            };
-            
-            // Create an editable text field at the exact position
-            let text_rect = egui::Rect::from_min_size(pos, size);
-            let mut text_content = element.text.clone();
-            
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut text_content)
-                        .font(egui::FontId::proportional(font_size))
-                        .text_color(font_color)
-                        .frame(false) // No border for seamless look
-                        .margin(egui::Vec2::ZERO)
-                );
-                
-                if response.changed() {
-                    edited_text = Some(text_content);
-                }
-            });
-        }
-        
-        // Render children and collect their edits
-        for child in &element.children {
-            if let Some(_) = self.render_positioned_element(ui, child, scale, canvas_origin) {
-                // Handle child edits if needed
-            }
-        }
-        
-        edited_text
     }
     
     pub fn get_plain_text(&self) -> String {
@@ -813,7 +480,6 @@ impl HtmlRenderer {
             self.extract_text_from_element(child, text);
         }
         
-        // Add newlines for block elements
         match element.tag.as_str() {
             "p" | "div" | "br" | "h1" | "h2" | "h3" => text.push('\n'),
             _ => {}

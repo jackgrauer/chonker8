@@ -135,25 +135,9 @@ impl App {
     
     fn show_editor(&mut self, ui: &mut egui::Ui) {
         if let Some(editor) = &mut self.editor {
-            // Mode toggle and controls
+            // Controls
             ui.horizontal(|ui| {
-                let (mode_text, tooltip) = if editor.is_html_rendering() { 
-                    ("XML Layout", "Rich XML with exact positioning (pdftohtml -xml)")
-                } else { 
-                    ("Clean Text", "Plain text extraction (pdftotext -layout)")
-                };
                 
-                if ui.button(format!("📄 {}", mode_text))
-                    .on_hover_text(tooltip)
-                    .clicked() {
-                    editor.toggle_html_rendering();
-                }
-                
-                if ui.button("⟳ Reload")
-                    .on_hover_text("Re-extract from PDF")
-                    .clicked() {
-                    let _ = editor.reload_pdf_content();
-                }
                 
                 ui.separator();
                 
@@ -171,72 +155,30 @@ impl App {
                     self.file.as_ref().unwrap().file_name().unwrap().to_string_lossy()));
             });
             
-            // Raw XML dropdown
-            ui.collapsing("🔽 Raw XML", |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(200.0)
-                    .show(ui, |ui| {
-                        let xml_content = editor.get_xml_content();
-                        ui.add(egui::TextEdit::multiline(&mut xml_content.as_str())
-                            .font(egui::TextStyle::Monospace)
-                            .code_editor()
-                            .desired_width(f32::INFINITY));
-                    });
-            });
             
             ui.separator();
             
-            // Render content based on mode
-            if editor.is_html_rendering() {
-                // XML mode: Simple vertical scrolling
-                egui::ScrollArea::vertical()
-                    .show(ui, |ui| {
-                        editor.render_html_content(ui);
-                    });
-            } else {
-                // Text mode: Editable text with ropey
-                let mut text = editor.get_text();
-                let resp = ui.add_sized(ui.available_size(),
-                    egui::TextEdit::multiline(&mut text)
-                        .font(egui::TextStyle::Monospace)
-                        .text_color(egui::Color32::from_rgb(100, 200, 255))
-                        .code_editor());
-                
-                if resp.changed() { 
-                    editor.set_text(text); 
-                }
-            }
+            // Always render XML content (removed clean text mode)
+            egui::ScrollArea::vertical()
+                .show(ui, |ui| {
+                    editor.render_html_content(ui);
+                });
             
             ui.input(|i| {
-                // Controls for XML mode
-                if editor.is_html_rendering() {
-                    // Arrow key panning
-                    if i.key_pressed(egui::Key::ArrowLeft) { editor.pan_left(); }
-                    if i.key_pressed(egui::Key::ArrowRight) { editor.pan_right(); }
-                    if i.key_pressed(egui::Key::ArrowUp) { editor.pan_up(); }
-                    if i.key_pressed(egui::Key::ArrowDown) { editor.pan_down(); }
-                    
-                    // Page navigation
-                    if i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::N) {
-                        editor.next_page();
-                    }
-                    if i.key_pressed(egui::Key::PageUp) || i.key_pressed(egui::Key::P) {
-                        editor.prev_page();
-                    }
+                // Arrow key panning
+                if i.key_pressed(egui::Key::ArrowLeft) { editor.pan_left(); }
+                if i.key_pressed(egui::Key::ArrowRight) { editor.pan_right(); }
+                if i.key_pressed(egui::Key::ArrowUp) { editor.pan_up(); }
+                if i.key_pressed(egui::Key::ArrowDown) { editor.pan_down(); }
+                
+                // Page navigation
+                if i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::N) {
+                    editor.next_page();
+                }
+                if i.key_pressed(egui::Key::PageUp) || i.key_pressed(egui::Key::P) {
+                    editor.prev_page();
                 }
                 
-                if i.modifiers.ctrl {
-                    match () {
-                        _ if i.key_pressed(egui::Key::C) => editor.copy_selection(),
-                        _ if i.key_pressed(egui::Key::X) => editor.cut_selection(),
-                        _ if i.key_pressed(egui::Key::V) => editor.paste(),
-                        _ if i.key_pressed(egui::Key::A) => editor.select_all(),
-                        _ if i.key_pressed(egui::Key::B) => editor.toggle_block_selection(),
-                        _ if i.key_pressed(egui::Key::R) => { let _ = editor.reload_pdf_content(); },
-                        _ if i.key_pressed(egui::Key::H) => editor.toggle_html_rendering(),
-                        _ => {}
-                    }
-                }
             });
         }
     }
