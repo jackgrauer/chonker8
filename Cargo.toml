@@ -38,6 +38,17 @@ quick-xml = "0.38"
 tempfile = "3.8"
 regex = "1.10"
 
+# CRF and ML for document structure
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.0", features = ["full"] }
+
+# Metal Document Classifier with Candle
+candle-core = { version = "0.9", features = ["metal"] }
+candle-nn = "0.9" 
+candle-transformers = "0.9"
+hf-hub = "0.4"
+tokenizers = "0.20"
+
 [[bin]]
 name = "chonker8"
 path = "src/main.rs"
