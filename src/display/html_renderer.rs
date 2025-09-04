@@ -88,7 +88,19 @@ impl HtmlRenderer {
                             let page = self.parse_page_info(e.attributes())?;
                             self.pages.push(page);
                         }
-                        "b" | "i" | "em" | "strong" => {
+                        // Alto XML elements
+                        "Page" => {
+                            let page = self.parse_alto_page(e.attributes())?;
+                            self.pages.push(page);
+                        }
+                        "String" => {
+                            // Alto String elements are self-closing with CONTENT attribute
+                            let text_elem = self.parse_alto_string(e.attributes())?;
+                            println!("Found Alto String: '{}'", text_elem.text);
+                            current_element.children.push(text_elem);
+                            continue; // Don't push to stack, it's self-closing
+                        }
+                        "b" | "i" | "em" | "strong" | "SP" | "TextBlock" | "TextLine" | "Layout" | "PrintSpace" => {
                             continue;
                         }
                         _ => {}
@@ -244,6 +256,82 @@ impl HtmlRenderer {
         Ok(page)
     }
     
+    fn parse_alto_page(&self, attributes: quick_xml::events::attributes::Attributes) -> Result<PageInfo> {
+        let mut page = PageInfo::default();
+        
+        for attr in attributes {
+            let attr = attr?;
+            let key = String::from_utf8_lossy(attr.key.as_ref());
+            let value = String::from_utf8_lossy(&attr.value);
+            
+            match key.as_ref() {
+                "PHYSICAL_IMG_NR" => {
+                    if let Ok(num) = value.parse::<u32>() {
+                        page.number = num;
+                    }
+                }
+                "WIDTH" => {
+                    if let Ok(width) = value.parse::<f32>() {
+                        page.width = width;
+                    }
+                }
+                "HEIGHT" => {
+                    if let Ok(height) = value.parse::<f32>() {
+                        page.height = height;
+                    }
+                }
+                _ => {}
+            }
+        }
+        
+        Ok(page)
+    }
+    
+    fn parse_alto_string(&self, attributes: quick_xml::events::attributes::Attributes) -> Result<HtmlElement> {
+        let mut element = HtmlElement {
+            tag: "text".to_string(), // Convert to our format
+            text: String::new(),
+            style: HtmlStyle::default(),
+            children: Vec::new(),
+        };
+        
+        for attr in attributes {
+            let attr = attr?;
+            let key = String::from_utf8_lossy(attr.key.as_ref());
+            let value = String::from_utf8_lossy(&attr.value);
+            
+            match key.as_ref() {
+                "CONTENT" => element.text = value.to_string(),
+                "HPOS" => {
+                    if let Ok(left) = value.parse::<f32>() {
+                        element.style.left = left;
+                    }
+                }
+                "VPOS" => {
+                    if let Ok(top) = value.parse::<f32>() {
+                        element.style.top = top;
+                    }
+                }
+                "WIDTH" => {
+                    if let Ok(width) = value.parse::<f32>() {
+                        element.style.width = width;
+                    }
+                }
+                "HEIGHT" => {
+                    if let Ok(height) = value.parse::<f32>() {
+                        element.style.height = height;
+                    }
+                }
+                "STYLEREFS" => {
+                    element.style.font_id = Some(value.to_string());
+                }
+                _ => {}
+            }
+        }
+        
+        Ok(element)
+    }
+    
     pub fn get_page_count(&self) -> usize {
         self.pages.len()
     }
@@ -257,17 +345,30 @@ impl HtmlRenderer {
         self.find_page_elements(&self.elements, &mut page_elements);
         
         if let Some(page_elem) = page_elements.get(page_index) {
-            page_elem.children.iter()
-                .filter(|e| e.tag == "text" && !e.text.trim().is_empty())
-                .collect()
+            // For Alto XML, collect String elements recursively
+            let mut text_elements = Vec::new();
+            self.collect_text_elements_recursive(&page_elem.children, &mut text_elements);
+            text_elements
         } else {
             Vec::new()
         }
     }
     
+    fn collect_text_elements_recursive<'a>(&self, elements: &'a [HtmlElement], collector: &mut Vec<&'a HtmlElement>) {
+        for element in elements {
+            if element.tag == "text" && !element.text.trim().is_empty() {
+                collector.push(element);
+            } else if element.tag == "String" {
+                // Alto String elements always have content (in CONTENT attribute)
+                collector.push(element);
+            }
+            self.collect_text_elements_recursive(&element.children, collector);
+        }
+    }
+    
     fn find_page_elements<'a>(&self, elements: &'a [HtmlElement], page_elements: &mut Vec<&'a HtmlElement>) {
         for element in elements {
-            if element.tag == "page" {
+            if element.tag == "page" || element.tag == "Page" {
                 page_elements.push(element);
             }
             self.find_page_elements(&element.children, page_elements);
@@ -277,8 +378,8 @@ impl HtmlRenderer {
     fn count_elements(&self, elements: &[HtmlElement], text_count: &mut i32, page_count: &mut i32) {
         for element in elements {
             match element.tag.as_str() {
-                "text" => *text_count += 1,
-                "page" => *page_count += 1,
+                "text" | "String" => *text_count += 1,
+                "page" | "Page" => *page_count += 1,
                 _ => {}
             }
             self.count_elements(&element.children, text_count, page_count);

@@ -137,6 +137,18 @@ impl App {
         if let Some(editor) = &mut self.editor {
             // Controls
             ui.horizontal(|ui| {
+                // A-B Format Toggle
+                let format_text = format!("🔬 {} vs {}", 
+                    if editor.is_using_alto() { "✅ pdfalto" } else { "⭕ pdfalto" },
+                    if editor.is_using_alto() { "⭕ pdftohtml" } else { "✅ pdftohtml" }
+                );
+                
+                if ui.button(format_text)
+                    .on_hover_text("A-B test: Toggle between pdftohtml -xml and pdfalto Alto XML output")
+                    .clicked() {
+                    editor.toggle_format();
+                }
+                
                 ui.separator();
                 
                 // Page navigation
