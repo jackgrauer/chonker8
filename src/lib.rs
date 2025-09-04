@@ -10,6 +10,9 @@ pub mod core {
 // Alto structure editor (uses native Alto XML hierarchy)
 pub mod alto_structure_editor;
 
+// Spatial table reconstruction from Alto coordinates
+pub mod spatial_table;
+
 // GROBID-style heuristics and CRF integration
 pub mod grobid_heuristics;
 pub mod crf_integration;

@@ -1,6 +1,13 @@
 use crate::grobid_heuristics::{DocumentStructure, DocumentContext};
 use crate::alto_structure_editor::AltoTextBlock;
 use serde::{Deserialize, Serialize};
+use regex::Regex;
+use std::sync::LazyLock;
+
+// Pre-compiled regex for better performance
+static DATE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\d{4}").expect("Failed to compile date regex")
+});
 
 pub struct WapitiCRF {
     model_path: String,
@@ -118,7 +125,7 @@ t00:%x[-1,0]/%x[0,0]/%x[1,0]
         // Financial document features
         let contains_currency = text.contains('$') || text.contains("million") || text.contains("dollars");
         let contains_percentage = text.contains('%');
-        let contains_date = regex::Regex::new(r"\d{4}").unwrap().is_match(text) ||
+        let contains_date = DATE_REGEX.is_match(text) ||
                            text.contains("June") || text.contains("November");
         
         // Table likelihood (spatial analysis)
