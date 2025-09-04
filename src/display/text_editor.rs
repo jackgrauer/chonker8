@@ -160,22 +160,34 @@ impl TextEditor {
         painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_rgb(12, 12, 12));
         let origin = canvas_rect.min + self.pan_offset;
         
-        // Parse and render String elements directly
+        // Parse and render String elements for current page only
         let mut string_count = 0;
+        let mut current_page_num = 0;
+        let mut in_target_page = false;
+        
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                     let tag_bytes = e.name().as_ref().to_vec();
                     let local_name = tag_bytes.split(|&b| b == b':').last().unwrap_or(&tag_bytes);
                     
-                    // Debug: print first few tag names
-                    if string_count < 5 {
-                        println!("Found tag: {:?}", String::from_utf8_lossy(&tag_bytes));
+                    // Track page boundaries
+                    if local_name == b"Page" {
+                        // Check PHYSICAL_IMG_NR to see if this is our target page
+                        for attr in e.attributes() {
+                            if let Ok(attr) = attr {
+                                let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                                if key == "PHYSICAL_IMG_NR" {
+                                    let page_num: usize = String::from_utf8_lossy(&attr.value).parse().unwrap_or(1);
+                                    in_target_page = page_num == (self.current_page + 1); // Convert 0-based to 1-based
+                                    break;
+                                }
+                            }
+                        }
                     }
                     
-                    if local_name == b"String" {
+                    if local_name == b"String" && in_target_page {
                         string_count += 1;
-                        println!("Processing String element #{}", string_count);
                     let mut content = String::new();
                     let mut hpos = 0.0;
                     let mut vpos = 0.0;
@@ -212,6 +224,13 @@ impl TextEditor {
                             egui::Color32::from_rgb(100, 255, 100), // Green for Alto
                         );
                     }
+                    }
+                }
+                Ok(Event::End(e)) => {
+                    let tag_bytes = e.name().as_ref().to_vec();
+                    let local_name = tag_bytes.split(|&b| b == b':').last().unwrap_or(&tag_bytes);
+                    if local_name == b"Page" {
+                        in_target_page = false;
                     }
                 }
                 Ok(Event::Eof) => break,
